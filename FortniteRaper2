@@ -444,12 +444,12 @@ local function createToggleButton(parent, label, callback, initialState, allowKe
 	return toggleButton
 end
 
-local function createLabel(parent, label)
-		local toggleButton = inst("Frame", {
+local function createLabel(label)
+	local labelFrame = inst("Frame", {
 		Name = "LabelHolder",
 		BorderSizePixel = 0,
 		Size = UDim2.fromOffset(237, 28),
-		AnchorPoint = Vector2.new(0.5,0),
+		AnchorPoint = Vector2.new(0.5, 0),
 		BackgroundTransparency = 0,
 		BackgroundColor3 = Color3.fromRGB(31, 31, 31),
 		Children = {
@@ -457,8 +457,8 @@ local function createLabel(parent, label)
 			inst("TextLabel", {
 				Name = "Title",
 				BorderSizePixel = 0,
-				Size = UDim2.fromScale(1,0.5),
-				AnchorPoint = Vector2.new(0.5,0.5),
+				Size = UDim2.fromScale(1, 0.5),
+				AnchorPoint = Vector2.new(0.5, 0.5),
 				Position = UDim2.fromScale(0.54, 0.5),
 				BackgroundTransparency = 1,
 				BackgroundColor3 = Color3.fromRGB(44, 44, 44),
@@ -470,7 +470,23 @@ local function createLabel(parent, label)
 				TextXAlignment = Enum.TextXAlignment.Left,
 			})
 		}
+	})
+	return labelFrame
+end
+
+local function createDivider(parent, label)
+	local divider = inst("Frame", {
+		Name = "Divider",
+		BorderSizePixel = 0,
+		Size = UDim2.new(2, 0, 0, 2),
+		AnchorPoint = Vector2.new(0.5, 0),
+		BackgroundTransparency = 0,
+		BackgroundColor3 = Color3.fromRGB(31, 31, 31),
+		Children = {
+			inst("UICorner", { CornerRadius = UDim.new(1, 0) }),
+		}
 	}, parent)
+	return divider
 end
 
 local function createSimpleButton(parent, label, callback)
@@ -1069,6 +1085,94 @@ function Library:CreateWindow(settings)
 		end)
 	end
 
+	
+	local function SetupMasonryLayout(scroller)
+		-- Remove the UIListLayout (we'll place manually)
+		local existingList = scroller:FindFirstChildOfClass("UIListLayout")
+		if existingList then
+			existingList:Destroy()
+		end
+
+		local padding = scroller:FindFirstChildOfClass("UIPadding")
+		local function getPad(side)
+			if not padding then return 0 end
+			if side == "Left" then
+				return padding.PaddingLeft.Offset
+			elseif side == "Right" then
+				return padding.PaddingRight.Offset
+			elseif side == "Top" then
+				return padding.PaddingTop.Offset
+			elseif side == "Bottom" then
+				return padding.PaddingBottom.Offset
+			end
+			return 0
+		end
+
+		local function relayout()
+			if not scroller or not scroller.Parent then return end
+
+			local leftPad  = getPad("Left")
+			local rightPad = getPad("Right")
+			local topPad   = getPad("Top")
+			local botPad   = getPad("Bottom")
+
+			local gapY = 8 -- vertical spacing between rows (same idea as UIListLayout.Padding)
+
+			-- Keep your original 0.48 width groups.
+			-- So just place one at x=0, the other at x=0.52 (0.48 + 0.04 gap)
+			-- That .04 is the same gap UIListLayout gave between wrapped items.
+			local colX = {
+				UDim2.new(0, leftPad, 0, 0),       -- left column
+				UDim2.new(0.52, -rightPad, 0, 0), -- right column
+			}
+
+			local colHeights = { topPad, topPad }
+			local maxH = topPad
+
+			for _, child in ipairs(scroller:GetChildren()) do
+				if child:IsA("Frame") and child.Visible then
+					local col = (colHeights[1] <= colHeights[2]) and 1 or 2
+					child.Position = colX[col] + UDim2.new(0, 0, 0, colHeights[col])
+
+					-- 🔑 DO NOT touch child.Size — it stays UDim2.fromScale(0.48, 0)
+					colHeights[col] = colHeights[col] + child.AbsoluteSize.Y + gapY
+					if colHeights[col] > maxH then
+						maxH = colHeights[col]
+					end
+				end
+			end
+
+			scroller.CanvasSize = UDim2.new(0, 0, 0, math.max(0, maxH + botPad - gapY))
+		end
+
+		-- Hook changes
+		local function hookChild(child)
+			if not child:IsA("Frame") then return end
+			child:GetPropertyChangedSignal("AbsoluteSize"):Connect(relayout)
+			child:GetPropertyChangedSignal("Visible"):Connect(relayout)
+			child.DescendantAdded:Connect(function() task.defer(relayout) end)
+			child.DescendantRemoving:Connect(function() task.defer(relayout) end)
+		end
+
+		for _, ch in ipairs(scroller:GetChildren()) do
+			hookChild(ch)
+		end
+
+		scroller.ChildAdded:Connect(function(ch)
+			task.defer(function()
+				hookChild(ch)
+				relayout()
+			end)
+		end)
+
+		scroller.ChildRemoved:Connect(function()
+			task.defer(relayout)
+		end)
+
+		scroller:GetPropertyChangedSignal("AbsoluteSize"):Connect(relayout)
+
+		task.defer(relayout)
+	end
 
 	local function createTab(Text, color)
 		tabOrder = tabOrder + 1
@@ -1144,21 +1248,15 @@ function Library:CreateWindow(settings)
 			ScrollBarThickness = 0,
 			ScrollBarImageTransparency = 1,
 			Children = {
-				inst("UIListLayout", {
-					Padding = UDim.new(0.01, 0),
-					FillDirection = Enum.FillDirection.Horizontal,
-					VerticalAlignment = Enum.VerticalAlignment.Top,
-					HorizontalAlignment = Enum.HorizontalAlignment.Left,
-					Wraps = true,
-				}),
 				inst("UIPadding", {
-					PaddingLeft = UDim.new(0, 5),
-					PaddingRight = UDim.new(0, 5),
-					PaddingTop = UDim.new(0, 5),
-					PaddingBottom = UDim.new(0, 5),
+					PaddingLeft = UDim.new(0, 1),
+					PaddingRight = UDim.new(0, 4),
+					PaddingTop = UDim.new(0,1),
 				})
 			}
 		}, tabFrame)
+
+		SetupMasonryLayout(scroller)
 
 		local tabInfo = {
 			Button = button,
@@ -1293,6 +1391,7 @@ function Library:CreateWindow(settings)
 		return tabInfo
 	end
 
+
 	local function createGroup(name, parentTabText)
 		local tabInfo = tabs[parentTabText]
 		if not tabInfo then
@@ -1306,7 +1405,7 @@ function Library:CreateWindow(settings)
 		local group = inst("Frame", {
 			Name = name,
 			BorderSizePixel = 0,
-			Size = UDim2.fromScale(0.48, 0),
+			Size = UDim2.fromScale(0.49, 0),
 			BackgroundTransparency = 0,
 			BackgroundColor3 = Color3.fromRGB(42,42,42),
 			ClipsDescendants = true,
@@ -1354,6 +1453,9 @@ function Library:CreateWindow(settings)
 			AutomaticSize = Enum.AutomaticSize.Y,
 		}, group)
 
+
+		---googogogogooggogoogoagoagoagooagoaoao
+
 		inst("UIListLayout", {
 			Padding = UDim.new(0, 3),
 			FillDirection = Enum.FillDirection.Vertical,
@@ -1389,15 +1491,15 @@ function Library:CreateWindow(settings)
 			return toggle
 		end
 
-		function groupObj:AddLabel(labelOrTable)
-			local label, cb
-			if type(labelOrTable) == "table" then
-				label = labelOrTable.Text or "Button"
-			else
-				label = labelOrTable
-			end
-			local btn = createLabel(Holder, label)
-			return btn
+		function groupObj:AddDivider(label)
+			local divider = createDivider(self.Holder, label)
+			return divider
+		end
+
+		function groupObj:AddLabel(label)
+			local labelFrame = createLabel(label)
+			labelFrame.Parent = self.Holder
+			return labelFrame
 		end
 
 		function groupObj:AddButton(labelOrTable, callback)
