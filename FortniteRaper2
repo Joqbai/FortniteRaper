@@ -1,0 +1,2964 @@
+local TweenService = game:GetService("TweenService")
+local TextService = game:GetService("TextService")
+local UserInputService = game:GetService("UserInputService")
+
+local CoreGui = game:GetService("CoreGui")
+local protectgui = protectgui or (syn and syn.protect_gui) or function() end
+local gethui = gethui or function() return CoreGui end
+
+local currentOpenDropdown = nil
+local currentHueTween = nil
+local currentOpenColorPicker = nil
+local NOTIFICATION_HEIGHT = 0.209
+local NOTIFICATION_GAP = 0.007
+local activeTweens = {}
+local twen = {}
+
+local function lerpColorSequence(from, to, alpha)
+	local newKeypoints = {}
+	for i = 1, #from.Keypoints do
+		local fromKey = from.Keypoints[i]
+		local toKey = to.Keypoints[i]
+		local newColor = fromKey.Value:Lerp(toKey.Value, alpha)
+		newKeypoints[i] = ColorSequenceKeypoint.new(fromKey.Time, newColor)
+	end
+	return ColorSequence.new(newKeypoints)
+end
+
+local TAGS = {
+	bold = { open = "<b>", close = "</b>" },
+	italic = { open = "<i>", close = "</i>" },
+	underline = { open = "<u>", close = "</u>" },
+	strikethrough = { open = "<s>", close = "</s>" },
+	font = { open = '<font face="%s">', close = "</font>" },
+	color = { open = '<font color="%s">', close = "</font>" },
+	size = { open = '<font size="%d">', close = "</font>" }
+}
+
+local function colorToHex(color)
+	return string.format("#%02X%02X%02X", color.R * 255, color.G * 255, color.B * 255)
+end
+
+local function ParentUI(UI)
+    pcall(protectgui, UI)
+    if not pcall(function()
+            UI.Parent = gethui()
+        end) then
+        UI.Parent = game:GetService("Players").LocalPlayer:WaitForChild("PlayerGui", math.huge)
+    end
+end
+
+local function formatRichText(text, styles)
+	local formattedText = tostring(text)
+	local replacements = {}
+	for _, style in ipairs(styles or {}) do
+		local tagType = style.Type
+		local value = style.Value
+		local range = style.Range
+		if tagType and TAGS[tagType] then
+			local startIdx, endIdx = range[1], range[2]
+			if startIdx and endIdx and startIdx <= endIdx and startIdx >= 1 and endIdx <= #formattedText + 1 then
+				local openTag = TAGS[tagType].open
+				if tagType == "font" then
+					openTag = string.format(openTag, value)
+				elseif tagType == "color" then
+					openTag = string.format(openTag, colorToHex(value))
+				elseif tagType == "size" then
+					openTag = string.format(openTag, value)
+				end
+				table.insert(replacements, {startIdx = startIdx, endIdx = endIdx, open = openTag, close = TAGS[tagType].close})
+			end
+		end
+	end
+	table.sort(replacements, function(a, b) return a.startIdx > b.startIdx end)
+	for _, replacement in ipairs(replacements) do
+		formattedText = formattedText:sub(1, replacement.startIdx - 1)
+			.. replacement.open
+			.. formattedText:sub(replacement.startIdx, replacement.endIdx)
+			.. replacement.close
+			.. formattedText:sub(replacement.endIdx + 1)
+	end
+	return formattedText
+end
+
+local function applyRichTextTo(instance, text, styles)
+	if not instance:IsA("TextLabel") and not instance:IsA("TextBox") then
+		return
+	end
+	instance.RichText = true
+	instance.Text = formatRichText(text, styles)
+end
+
+function twen.fortnite(instance, properties, styleOrCallback, tweenOptions)
+	local tweenStyle = "Quad"
+	local callback = nil
+	if type(styleOrCallback) == "function" then
+		callback = styleOrCallback
+	elseif type(styleOrCallback) == "string" then
+		tweenStyle = string.upper(string.sub(styleOrCallback, 1, 1)) .. string.lower(string.sub(styleOrCallback, 2))
+		if tweenOptions and type(tweenOptions.Callback) == "function" then
+			callback = tweenOptions.Callback
+		end
+	end
+	tweenOptions = type(tweenOptions) == "table" and tweenOptions or {}
+	local duration = tweenOptions.Duration or 0.3
+	local easingDirection = tweenOptions.EasingDirection or Enum.EasingDirection.Out
+	if instance:IsA("UIGradient") and properties.Color then
+		local fromColor = instance.Color
+		local toColor = properties.Color
+		local startTime = tick()
+		local styles = {
+			Quad = Enum.EasingStyle.Quad,
+			Back = Enum.EasingStyle.Back,
+			Linear = Enum.EasingStyle.Linear,
+			Elastic = Enum.EasingStyle.Elastic,
+			Bounce = Enum.EasingStyle.Bounce,
+			Sine = Enum.EasingStyle.Sine
+		}
+		local connection
+		connection = game:GetService("RunService").RenderStepped:Connect(function()
+			local elapsed = tick() - startTime
+			local alpha = math.min(elapsed / duration, 1)
+			local easingFunction = TweenService:GetValue(
+				alpha,
+				styles[tweenStyle] or styles.Quad,
+				easingDirection
+			)
+			instance.Color = lerpColorSequence(fromColor, toColor, easingFunction)
+			if alpha == 1 then
+				connection:Disconnect()
+				if callback then
+					callback()
+				end
+			end
+		end)
+		return {
+			Play = function() end,
+			Cancel = function()
+				if connection then
+					connection:Disconnect()
+				end
+			end
+		}
+	end
+	local styles = {
+		Quad = TweenInfo.new(duration, Enum.EasingStyle.Quad, easingDirection),
+		Back = TweenInfo.new(duration, Enum.EasingStyle.Back, easingDirection),
+		Linear = TweenInfo.new(duration, Enum.EasingStyle.Linear, easingDirection),
+		Elastic = TweenInfo.new(duration, Enum.EasingStyle.Elastic, easingDirection),
+		Bounce = TweenInfo.new(duration, Enum.EasingStyle.Bounce, easingDirection),
+		Sine = TweenInfo.new(duration, Enum.EasingStyle.Sine, easingDirection)
+	}
+	local tween = TweenService:Create(instance, styles[tweenStyle] or styles.Quad, properties)
+	if callback then
+		tween.Completed:Connect(callback)
+	end
+	tween:Play()
+	return tween
+end
+
+local function applyButtonAnimations(button, defaultColor, hoverColor, clickColor, duration)
+	defaultColor = defaultColor or Color3.fromRGB(42, 42, 42)
+	hoverColor = hoverColor or defaultColor
+	clickColor = clickColor or defaultColor
+	duration = duration or 0.1
+	local isHovered = false
+	button.MouseEnter:Connect(function()
+		isHovered = true
+		twen.fortnite(button, {BackgroundColor3 = hoverColor}, "Linear", {Duration = duration, EasingDirection = Enum.EasingDirection.InOut})
+	end)
+	button.MouseLeave:Connect(function()
+		isHovered = false
+		twen.fortnite(button, {BackgroundColor3 = defaultColor}, "Linear", {Duration = duration, EasingDirection = Enum.EasingDirection.InOut})
+	end)
+	button.MouseButton1Down:Connect(function()
+		twen.fortnite(button, {BackgroundColor3 = clickColor}, "Linear", {Duration = duration, EasingDirection = Enum.EasingDirection.InOut})
+	end)
+	button.MouseButton1Up:Connect(function()
+		local targetColor = isHovered and hoverColor or defaultColor
+		twen.fortnite(button, {BackgroundColor3 = targetColor}, "Linear", {Duration = duration, EasingDirection = Enum.EasingDirection.InOut})
+	end)
+end
+
+local Children = {}
+Children.__index = Children
+function Children.new()
+	return setmetatable({}, Children)
+end
+function Children:Add(...)
+	local items = {...}
+	for _, item in ipairs(items) do
+		table.insert(self, item)
+	end
+	return self
+end
+function Children:ApplyTo(parent)
+	for _, child in ipairs(self) do
+		if typeof(child) == "Instance" then
+			child.Parent = parent
+		end
+	end
+end
+
+local function inst(className, properties, parent)
+	local children = nil
+	if properties and properties.Children then
+		children = properties.Children
+		local newProperties = {}
+		for prop, value in pairs(properties) do
+			if prop ~= "Children" then
+				newProperties[prop] = value
+			end
+		end
+		properties = newProperties
+	end
+	local instance = Instance.new(className)
+	for prop, value in pairs(properties or {}) do
+		instance[prop] = value
+	end
+	if parent then
+		instance.Parent = parent
+	end
+	if children then
+		if typeof(children) == "table" and getmetatable(children) == Children then
+			children:ApplyTo(instance)
+		elseif typeof(children) == "table" then
+			for _, child in ipairs(children) do
+				if typeof(child) == "Instance" then
+					child.Parent = instance
+				end
+			end
+		end
+	end
+	return instance
+end
+
+local function createToggleButton(parent, label, callback, initialState, allowKeybind)
+	local toggleButton = inst("Frame", {
+		Name = "ToggleButtonHolder",
+		BorderSizePixel = 0,
+		Size = UDim2.fromOffset(237, 28),
+		AnchorPoint = Vector2.new(0.5,0),
+		BackgroundTransparency = 0,
+		BackgroundColor3 = Color3.fromRGB(31, 31, 31),
+		Children = {
+			inst("UICorner", { CornerRadius = UDim.new(0.2, 0) }),
+			inst("TextLabel", {
+				Name = "Title",
+				BorderSizePixel = 0,
+				Size = UDim2.fromScale(1,0.5),
+				AnchorPoint = Vector2.new(0.5,0.5),
+				Position = UDim2.fromScale(0.54, 0.5),
+				BackgroundTransparency = 1,
+				BackgroundColor3 = Color3.fromRGB(44, 44, 44),
+				Text = label or "Toggle",
+				TextScaled = true,
+				TextSize = 14,
+				TextColor3 = Color3.fromRGB(255, 255, 255),
+				Font = Enum.Font.SourceSansSemibold,
+				TextXAlignment = Enum.TextXAlignment.Left,
+			})
+		}
+	}, parent)
+
+	local toggleBtnPosition = allowKeybind and UDim2.fromScale(0.98, 0.5) or UDim2.fromScale(0.98, 0.5)
+
+	local Btn = inst("TextButton", {
+		Name = "Btn",
+		BorderSizePixel = 0,
+		Size = UDim2.fromScale(0.12, 0.7),
+		AnchorPoint = Vector2.new(1, 0.5),
+		Position = toggleBtnPosition,
+		AutoButtonColor = false,
+		Text = "",
+		BackgroundTransparency = 0,
+		BackgroundColor3 = Color3.fromRGB(42, 42, 42),
+		Children = {
+			inst("UICorner", { CornerRadius = UDim.new(11, 0) })
+		}
+	}, toggleButton)
+
+	local isToggled = initialState or false
+	local ball = inst("Frame", {
+		Name = "Ball",
+		BorderSizePixel = 0,
+		Size = UDim2.fromScale(0.55, 0.55),
+		AnchorPoint = Vector2.new(0.5, 0.5),
+		Position = isToggled and UDim2.fromScale(0.65, 0.5) or UDim2.fromScale(0.337, 0.5),
+		BackgroundTransparency = 0,
+		BackgroundColor3 = isToggled and Color3.fromRGB(155, 255, 135) or Color3.fromRGB(109, 109, 109),
+		SizeConstraint = Enum.SizeConstraint.RelativeXX,
+		Children = {
+			inst("UICorner", { CornerRadius = UDim.new(11, 0) })
+		}
+	}, Btn)
+
+	applyButtonAnimations(Btn, 
+		Color3.fromRGB(42, 42, 42),
+		Color3.fromRGB(53, 53, 53), 
+		Color3.fromRGB(24, 24, 24) 
+	)
+
+	local function toggle()
+		isToggled = not isToggled
+		local targetPos = isToggled and UDim2.fromScale(0.65, 0.5) or UDim2.fromScale(0.337, 0.5)
+		local targetColor = isToggled and Color3.fromRGB(155, 255, 135) or Color3.fromRGB(109, 109, 109)
+		twen.fortnite(ball, {Position = targetPos, BackgroundColor3 = targetColor}, "Linear", {Duration = 0.1, EasingDirection = Enum.EasingDirection.InOut})
+		if callback then callback(isToggled) end
+	end
+
+	Btn.MouseButton1Click:Connect(toggle)
+
+	local keybindButton = nil
+	local currentKey = nil
+	local keyInputConnection = nil
+
+	if allowKeybind then
+		local function getDisplayName(keyCode)
+			if not keyCode then return "None" end
+			local keyName = tostring(keyCode):match("%.([^%.]+)$")
+			return keyName or "None"
+		end
+
+		local function getButtonWidth(text)
+			local success, textSize = pcall(function()
+				return TextService:GetTextSize(
+					text,
+					11,
+					Enum.Font.SourceSansSemibold,
+					Vector2.new(1000, 1000)
+				)
+			end)
+
+			if not success then
+				return UDim2.fromScale(0.15, 0.5)
+			end
+
+			local extraPadding = 8
+			local parentWidth = 237
+			local scale = math.max(0.06, (textSize.X + extraPadding) / parentWidth)
+			return UDim2.fromScale(scale, 0.5)
+		end
+
+		local initialText = getDisplayName(currentKey)
+		keybindButton = inst("TextButton", {
+			Name = "KeybindButton",
+			BorderSizePixel = 0,
+			Size = getButtonWidth(initialText),
+			AnchorPoint = Vector2.new(1, 0.5),
+			Position = UDim2.fromScale(0.84, 0.5),
+			BackgroundTransparency = 0,
+			BackgroundColor3 = Color3.fromRGB(42, 42, 42),
+			AutoButtonColor = false,
+			Text = initialText,
+			TextColor3 = Color3.fromRGB(255, 255, 255),
+			Font = Enum.Font.SourceSansSemibold,
+			TextScaled = false,
+			TextSize = 11,
+			Children = {
+				inst("UICorner", { CornerRadius = UDim.new(0.3, 0) }),
+				inst("UIStroke", {
+					Color = Color3.fromRGB(25, 25, 25),
+					ApplyStrokeMode = Enum.ApplyStrokeMode.Border,
+					Transparency = 0
+				})
+			}
+		}, toggleButton)
+
+		applyButtonAnimations(keybindButton, 
+			Color3.fromRGB(42, 42, 42),
+			Color3.fromRGB(53, 53, 53),
+			Color3.fromRGB(24, 24, 24)
+		)
+
+		local isBinding = false
+		local inputConnection
+
+		local function updateKey(keyCode)
+			currentKey = keyCode
+			local displayText = getDisplayName(keyCode)
+			keybindButton.Text = displayText
+			local targetSize = getButtonWidth(displayText)
+			twen.fortnite(keybindButton, {Size = targetSize}, "Linear", {Duration = 0.1, EasingDirection = Enum.EasingDirection.InOut})
+
+			if keyInputConnection then
+				keyInputConnection:Disconnect()
+			end
+
+			if currentKey then
+				keyInputConnection = UserInputService.InputBegan:Connect(function(input, gameProcessed)
+					if gameProcessed then return end
+					if input.UserInputType == Enum.UserInputType.Keyboard and input.KeyCode == currentKey then
+						toggle()
+					end
+				end)
+			end
+		end
+
+		keybindButton.MouseButton1Click:Connect(function()
+			if isBinding then return end
+
+			isBinding = true
+			keybindButton.Text = "..."
+			local tempSize = getButtonWidth("...")
+			twen.fortnite(keybindButton, {Size = tempSize}, "Linear", {Duration = 0.1, EasingDirection = Enum.EasingDirection.InOut})
+			twen.fortnite(keybindButton.UIStroke, {Color = Color3.fromRGB(0, 137, 255)}, "Linear", {Duration = 0.1})
+
+			inputConnection = UserInputService.InputBegan:Connect(function(input, gameProcessed)
+				if gameProcessed then return end
+
+				if input.UserInputType == Enum.UserInputType.Keyboard then
+					isBinding = false
+					inputConnection:Disconnect()
+
+					if input.KeyCode == Enum.KeyCode.Backspace then
+						if keyInputConnection then
+							keyInputConnection:Disconnect()
+							keyInputConnection = nil
+						end
+						currentKey = nil
+						keybindButton.Text = "None"
+						local targetSize = getButtonWidth("None")
+						twen.fortnite(keybindButton, {Size = targetSize}, "Linear", {Duration = 0.1, EasingDirection = Enum.EasingDirection.InOut})
+						twen.fortnite(keybindButton.UIStroke, {Color = Color3.fromRGB(25, 25, 25)}, "Linear", {Duration = 0.1})
+					else
+						updateKey(input.KeyCode)
+						twen.fortnite(keybindButton.UIStroke, {Color = Color3.fromRGB(25, 25, 25)}, "Linear", {Duration = 0.1})
+					end
+				end
+			end)
+		end)
+
+		toggleButton.AncestryChanged:Connect(function()
+			if not toggleButton:IsDescendantOf(game) then
+				if inputConnection then
+					inputConnection:Disconnect()
+				end
+				if keyInputConnection then
+					keyInputConnection:Disconnect()
+				end
+			end
+		end)
+	end
+
+	return toggleButton
+end
+
+local function createLabel(parent, label)
+		local toggleButton = inst("Frame", {
+		Name = "LabelHolder",
+		BorderSizePixel = 0,
+		Size = UDim2.fromOffset(237, 28),
+		AnchorPoint = Vector2.new(0.5,0),
+		BackgroundTransparency = 0,
+		BackgroundColor3 = Color3.fromRGB(31, 31, 31),
+		Children = {
+			inst("UICorner", { CornerRadius = UDim.new(0.2, 0) }),
+			inst("TextLabel", {
+				Name = "Title",
+				BorderSizePixel = 0,
+				Size = UDim2.fromScale(1,0.5),
+				AnchorPoint = Vector2.new(0.5,0.5),
+				Position = UDim2.fromScale(0.54, 0.5),
+				BackgroundTransparency = 1,
+				BackgroundColor3 = Color3.fromRGB(44, 44, 44),
+				Text = label,
+				TextScaled = true,
+				TextSize = 14,
+				TextColor3 = Color3.fromRGB(255, 255, 255),
+				Font = Enum.Font.SourceSansSemibold,
+				TextXAlignment = Enum.TextXAlignment.Left,
+			})
+		}
+	}, parent)
+end
+
+local function createSimpleButton(parent, label, callback)
+	local simpleButton = inst("Frame", {
+		Name = "SimpleButtonHolder",
+		BorderSizePixel = 0,
+		Size = UDim2.fromOffset(237, 28),
+		AnchorPoint = Vector2.new(0.5,0),
+		BackgroundTransparency = 0,
+		BackgroundColor3 = Color3.fromRGB(31, 31, 31),
+		Children = {
+			inst("UICorner", { CornerRadius = UDim.new(0.2, 0) }),
+		}
+	}, parent)
+
+	local btn = inst("TextButton", {
+		Name = "BTN",
+		BorderSizePixel = 0,
+		Size = UDim2.fromScale(0.98, 0.8),
+		AnchorPoint = Vector2.new(0.5, 0.5),
+		Position = UDim2.fromScale(0.5,0.5),
+		BackgroundTransparency = 0,
+		BackgroundColor3 = Color3.fromRGB(42, 42, 42),
+		AutoButtonColor = false,
+		Text = "",
+		Children = {
+			inst("UICorner", { CornerRadius = UDim.new(0.2, 0) }),
+			inst("TextLabel", {
+				Name = "Title",
+				BorderSizePixel = 0,
+				Size = UDim2.fromScale(1,0.6),
+				AnchorPoint = Vector2.new(0.5,0.5),
+				Position = UDim2.fromScale(0.5, 0.5),
+				BackgroundTransparency = 1,
+				BackgroundColor3 = Color3.fromRGB(44, 44, 44),
+				Text = label or "Button",
+				TextScaled = true,
+				TextSize = 14,
+				TextColor3 = Color3.fromRGB(255, 255, 255),
+				Font = Enum.Font.SourceSansSemibold,
+				TextXAlignment = Enum.TextXAlignment.Center,
+			})
+		}
+	}, simpleButton)
+
+	applyButtonAnimations(btn,
+		Color3.fromRGB(42, 42, 42),
+		Color3.fromRGB(53, 53, 53),
+		Color3.fromRGB(24, 24, 24)
+	)
+
+	btn.MouseButton1Click:Connect(function()
+		if callback then callback() end
+	end)
+	return simpleButton
+end
+
+local function createSlider(parent, label, callback, min, max, default, suffix)
+	local slider = inst("Frame", {
+		Name = "SliderHolder",
+		BorderSizePixel = 0,
+		Size = UDim2.fromOffset(237, 28),
+		AnchorPoint = Vector2.new(0.5,0),
+		BackgroundTransparency = 0,
+		BackgroundColor3 = Color3.fromRGB(31, 31, 31),
+	}, parent)
+	inst("UICorner", { CornerRadius = UDim.new(0.2, 0) }, slider)
+	inst("TextLabel", {
+		Name = "Title",
+		BorderSizePixel = 0,
+		Size = UDim2.fromScale(1,0.5),
+		AnchorPoint = Vector2.new(0.5,0.5),
+		Position = UDim2.fromScale(0.54, 0.5),
+		BackgroundTransparency = 1,
+		BackgroundColor3 = Color3.fromRGB(44, 44, 44),
+		Text = label or "Slider",
+		TextScaled = true,
+		TextSize = 14,
+		TextColor3 = Color3.fromRGB(255, 255, 255),
+		Font = Enum.Font.SourceSansSemibold,
+		TextXAlignment = Enum.TextXAlignment.Left,
+	}, slider)
+
+	local bar = inst("Frame", {
+		Name = "bar",
+		BorderSizePixel = 0,
+		Size = UDim2.fromScale(0.3, 0.2),
+		AnchorPoint = Vector2.new(0.5, 0.5),
+		Position = UDim2.fromScale(0.62,0.5),
+		BackgroundTransparency = 0,
+		BackgroundColor3 = Color3.fromRGB(42, 42, 42),
+		Active = true,
+	}, slider)
+	inst("UICorner", { CornerRadius = UDim.new(11, 0) }, bar)
+
+	local progress = inst("Frame", {
+		Name = "Progress",
+		BorderSizePixel = 0,
+		BackgroundColor3 = Color3.fromRGB(0, 137, 255),
+		Size = UDim2.fromScale(0, 1),
+		Active = false,
+	}, bar)
+	inst("UICorner", { CornerRadius = UDim.new(11, 0) }, progress)
+
+	local ball = inst("Frame", {
+		Name = "Ball",
+		BorderSizePixel = 0,
+		Size = UDim2.fromOffset(9, 9),
+		AnchorPoint = Vector2.new(0.5, 0.5),
+		Position = UDim2.fromScale((default - min) / (max - min), 0.5),
+		BackgroundTransparency = 0,
+		BackgroundColor3 = Color3.fromRGB(109, 109, 109),
+		Active = true,
+	}, bar)
+	inst("UICorner", { CornerRadius = UDim.new(11, 0) }, ball)
+
+	local TextboxFrame = inst("Frame", {
+		Name = "TextboxFrame",
+		BorderSizePixel = 0,
+		Size = UDim2.fromScale(0.17, 0.5),
+		AnchorPoint = Vector2.new(0.5, 0.5),
+		Position = UDim2.fromScale(0.89, 0.5),
+		BackgroundTransparency = 0,
+		BackgroundColor3 = Color3.fromRGB(42, 42, 42),
+		Children = {
+			inst("UICorner", { CornerRadius = UDim.new(0.3, 0) }),
+			inst("UIStroke", { Color = Color3.fromRGB(25, 25, 25), Transparency = 0 })
+		}
+	}, slider)
+
+	local textbox = inst("TextBox", {
+		Name = "PercentageTextbox",
+		BorderSizePixel = 0,
+		Size = UDim2.fromScale(1, 0.8),
+		AnchorPoint = Vector2.new(0.5, 0.5),
+		Position = UDim2.fromScale(0.5,0.5),
+		BackgroundTransparency = 1,
+		TextColor3 = Color3.fromRGB(255, 255, 255),
+		Font = Enum.Font.SourceSansSemibold,
+		TextScaled = true,
+		Text = string.format("%.2f", default) .. (suffix or ""),
+		BackgroundColor3 = Color3.fromRGB(42, 42, 42),
+	}, TextboxFrame)
+
+	local dragging = false
+	local inputChangedConnection
+	local inputEndedConnection
+	local currentValue = default
+
+	local function updateSlider(value)
+		currentValue = math.clamp(value, min, max)
+		local percentage = (currentValue - min) / (max - min)
+		twen.fortnite(progress, {Size = UDim2.fromScale(percentage, 1)}, "Linear", {Duration = 0.05})
+		twen.fortnite(ball, {Position = UDim2.fromScale(percentage, 0.5)}, "Linear", {Duration = 0.05})
+		textbox.Text = string.format("%.2f", currentValue) .. (suffix or "")
+		if callback then callback(currentValue) end
+	end
+
+	local function startDragging(input)
+		if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+			dragging = true
+			local mousePos = input.Position.X
+			local barPos = bar.AbsolutePosition.X
+			local barSize = bar.AbsoluteSize.X
+			local percentage = math.clamp((mousePos - barPos) / barSize, 0, 1)
+			local newValue = min + (max - min) * percentage
+			updateSlider(newValue)
+			twen.fortnite(ball, {BackgroundColor3 = Color3.fromRGB(150, 150, 150)}, "Linear", {Duration = 0.1})
+		end
+	end
+
+	bar.InputBegan:Connect(startDragging)
+	ball.InputBegan:Connect(startDragging)
+
+	inputChangedConnection = UserInputService.InputChanged:Connect(function(input)
+		if dragging and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
+			local mousePos = input.Position.X
+			local barPos = bar.AbsolutePosition.X
+			local barSize = bar.AbsoluteSize.X
+			local percentage = math.clamp((mousePos - barPos) / barSize, 0, 1)
+			local newValue = min + (max - min) * percentage
+			updateSlider(newValue)
+		end
+	end)
+
+	inputEndedConnection = UserInputService.InputEnded:Connect(function(input)
+		if (input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch) and dragging then
+			dragging = false
+			twen.fortnite(ball, {BackgroundColor3 = Color3.fromRGB(109, 109, 109)}, "Linear", {Duration = 0.1})
+		end
+	end)
+
+	textbox.Focused:Connect(function()
+		twen.fortnite(TextboxFrame.UIStroke, {Color = Color3.fromRGB(0, 137, 255)}, "Linear", {Duration = 0.1})
+	end)
+
+	textbox.FocusLost:Connect(function(enterPressed)
+		if enterPressed then
+			local newValue = tonumber(textbox.Text)
+			if newValue then
+				twen.fortnite(ball, {BackgroundColor3 = Color3.fromRGB(150, 150, 150)}, "Linear", {Duration = 0.1})
+				updateSlider(newValue)
+				twen.fortnite(ball, {BackgroundColor3 = Color3.fromRGB(109, 109, 109)}, "Linear", {Duration = 0.1, DelayTime = 0.1})
+			else
+				textbox.Text = string.format("%.2f", currentValue) .. (suffix or "")
+			end
+		end
+		twen.fortnite(TextboxFrame.UIStroke, {Color = Color3.fromRGB(25, 25, 25)}, "Linear", {Duration = 0.1})
+		textbox.Text = string.format("%.2f", currentValue) .. (suffix or "")
+	end)
+
+	updateSlider(default)
+
+	slider.AncestryChanged:Connect(function()
+		if not slider:IsDescendantOf(game) then
+			if inputChangedConnection then
+				inputChangedConnection:Disconnect()
+			end
+			if inputEndedConnection then
+				inputEndedConnection:Disconnect()
+			end
+		end
+	end)
+
+	return slider
+end
+
+local function createKeypicker(parent, label, callback, defaultKey)
+	local keypicker = inst("Frame", {
+		Name = "KeypickerHolder",
+		BorderSizePixel = 0,
+		Size = UDim2.fromOffset(237, 28),
+		AnchorPoint = Vector2.new(0.5, 0),
+		BackgroundTransparency = 0,
+		BackgroundColor3 = Color3.fromRGB(31, 31, 31),
+		Children = {
+			inst("UICorner", { CornerRadius = UDim.new(0.2, 0) }),
+			inst("TextLabel", {
+				Name = "Title",
+				BorderSizePixel = 0,
+				Size = UDim2.fromScale(1, 0.5),
+				AnchorPoint = Vector2.new(0.5, 0.5),
+				Position = UDim2.fromScale(0.54, 0.5),
+				BackgroundTransparency = 1,
+				BackgroundColor3 = Color3.fromRGB(44, 44, 44),
+				Text = label or "Keypicker",
+				TextScaled = true,
+				TextSize = 14,
+				TextColor3 = Color3.fromRGB(255, 255, 255),
+				Font = Enum.Font.SourceSansSemibold,
+				TextXAlignment = Enum.TextXAlignment.Left,
+			})
+		}
+	}, parent)
+
+	local function getDisplayName(keyCode)
+		if not keyCode then return "None" end
+		local keyName = tostring(keyCode):match("%.([^%.]+)$")
+		return keyName or "None"
+	end
+
+	local function getButtonWidth(text)
+		local success, textSize = pcall(function()
+			return TextService:GetTextSize(
+				text,
+				11,
+				Enum.Font.SourceSansSemibold,
+				Vector2.new(1000, 1000)
+			)
+		end)
+
+		if not success then
+			return UDim2.fromScale(0.15, 0.5)
+		end
+
+		local extraPadding = 12
+		local parentWidth = 237
+		local scale = math.max(0.08, (textSize.X + extraPadding) / parentWidth)
+		return UDim2.fromScale(scale, 0.5)
+	end
+
+	local currentKey = defaultKey
+	local initialText = getDisplayName(currentKey)
+
+	local button = inst("TextButton", {
+		Name = "KeyButton",
+		BorderSizePixel = 0,
+		Size = getButtonWidth(initialText),
+		AnchorPoint = Vector2.new(1, 0.5),
+		Position = UDim2.fromScale(0.976, 0.5),
+		BackgroundTransparency = 0,
+		BackgroundColor3 = Color3.fromRGB(42, 42, 42),
+		AutoButtonColor = false,
+		Text = initialText,
+		TextColor3 = Color3.fromRGB(255, 255, 255),
+		Font = Enum.Font.SourceSansSemibold,
+		TextScaled = false,
+		TextSize = 11,
+		Children = {
+			inst("UICorner", { CornerRadius = UDim.new(0.3, 0) }),
+			inst("UIStroke", {
+				Color = Color3.fromRGB(25, 25, 25),
+				ApplyStrokeMode = Enum.ApplyStrokeMode.Border,
+				Transparency = 0
+			})
+		}
+	}, keypicker)
+
+	applyButtonAnimations(button, 
+		Color3.fromRGB(42, 42, 42),
+		Color3.fromRGB(53, 53, 53),
+		Color3.fromRGB(24, 24, 24)
+	)
+
+	local isBinding = false
+	local inputConnection
+
+	local function updateKey(keyCode)
+		currentKey = keyCode
+		local displayText = getDisplayName(keyCode)
+		button.Text = displayText
+		local targetSize = getButtonWidth(displayText)
+		twen.fortnite(button, {Size = targetSize}, "Linear", {Duration = 0.1, EasingDirection = Enum.EasingDirection.InOut})
+		if callback then
+			callback(currentKey)
+		end
+	end
+
+	button.MouseButton1Click:Connect(function()
+		if isBinding then return end
+
+		isBinding = true
+		button.Text = "..."
+		local tempSize = getButtonWidth("...")
+		twen.fortnite(button, {Size = tempSize}, "Linear", {Duration = 0.1, EasingDirection = Enum.EasingDirection.InOut})
+		twen.fortnite(button.UIStroke, {Color = Color3.fromRGB(0, 137, 255)}, "Linear", {Duration = 0.1})
+
+		inputConnection = UserInputService.InputBegan:Connect(function(input, gameProcessed)
+			if gameProcessed then return end
+
+			if input.UserInputType == Enum.UserInputType.Keyboard then
+				isBinding = false
+				inputConnection:Disconnect()
+
+				if input.KeyCode == Enum.KeyCode.Backspace then
+					currentKey = nil
+					button.Text = "None"
+					local targetSize = getButtonWidth("None")
+					twen.fortnite(button, {Size = targetSize}, "Linear", {Duration = 0.1, EasingDirection = Enum.EasingDirection.InOut})
+					twen.fortnite(button.UIStroke, {Color = Color3.fromRGB(25, 25, 25)}, "Linear", {Duration = 0.1})
+					if callback then
+						callback(nil)
+					end
+				else
+					updateKey(input.KeyCode)
+					twen.fortnite(button.UIStroke, {Color = Color3.fromRGB(25, 25, 25)}, "Linear", {Duration = 0.1})
+				end
+			end
+		end)
+	end)
+
+	keypicker.AncestryChanged:Connect(function()
+		if not keypicker:IsDescendantOf(game) then
+			if inputConnection then
+				inputConnection:Disconnect()
+			end
+		end
+	end)
+
+	if defaultKey and callback then
+		callback(currentKey)
+	end
+
+	return keypicker
+end
+
+local Library = {}
+function Library:CreateWindow(settings)
+    local title = settings.Title or "No Title"
+    local ToggleKeybind = settings.ToggleKeybind or Enum.KeyCode.RightAlt
+    local screenGui = inst("ScreenGui", {
+        Name = "Fotnite",
+        ZIndexBehavior = Enum.ZIndexBehavior.Sibling,
+        ResetOnSpawn = false,
+        IgnoreGuiInset = true,
+        DisplayOrder = 999,
+    })
+    ParentUI(screenGui)
+
+    local googoogaga = inst("CanvasGroup", {
+        Name = "Group",
+        Size = UDim2.fromOffset(554, 453),
+        Position = UDim2.fromScale(0.5, 0.5),
+        AnchorPoint = Vector2.new(0.5, 0.5),
+        BackgroundColor3 = Color3.fromRGB(31,31,31),
+        GroupTransparency = 0,
+        BorderSizePixel = 0,
+        Visible = true,
+        Children= {
+            inst("UIScale", { Scale = 1 }),
+        }
+    }, screenGui)
+
+	local profileviewFrame = inst("Frame", {
+		Name = "ProfileMainFrame",
+		Size = UDim2.fromScale(0.35, 0.17),
+		Position = UDim2.fromScale(0.23, 0.945),
+		AnchorPoint = Vector2.new(0.5, 1),
+		BackgroundColor3 = Color3.fromRGB(42, 42, 42),
+		BorderSizePixel = 0,
+		ZIndex = 2,
+		Visible = false,
+		Children= {
+			inst("UICorner", { CornerRadius = UDim.new(0.06, 0) }),
+			inst("UIStroke", {
+				Color = Color3.fromRGB(74, 74, 74),
+				ApplyStrokeMode = Enum.ApplyStrokeMode.Border,
+				Transparency = 0.87,
+				Thickness = 2,
+			})
+		}
+	},googoogaga)
+
+	local pfp = inst("Frame", {
+		Name = "ImageFrame",
+		Size = UDim2.fromScale(0.34, 0.34),
+		SizeConstraint = Enum.SizeConstraint.RelativeXX,
+		Position = UDim2.fromScale(0.2, 0.5),
+		AnchorPoint = Vector2.new(0.5, 0.5),
+		BackgroundColor3 = Color3.fromRGB(30, 30, 30),
+		BorderSizePixel = 0,
+		ClipsDescendants = true,
+		ZIndex = 2,
+		Visible = true,
+		Children= {
+			inst("UICorner", { CornerRadius = UDim.new(0.3, 0) }),
+			inst("UIStroke", {
+				Color = Color3.fromRGB(17, 17, 17),
+				ApplyStrokeMode = Enum.ApplyStrokeMode.Border,
+				Transparency = 0.87,
+				Thickness = 2,
+			})
+		}
+	},profileviewFrame)
+
+	local Image = inst("ImageLabel", {
+		Name = "ImageLabel",
+		Size = UDim2.fromScale(1, 1),
+		Position = UDim2.fromScale(0.5, 0.5),
+		AnchorPoint = Vector2.new(0.5, 0.5),
+		BackgroundColor3 = Color3.fromRGB(42, 42, 42),
+		BorderSizePixel = 0,
+		BackgroundTransparency = 1,
+		ZIndex = 2,
+		Visible = true,
+		Image = "rbxassetid://9456359598",
+		Children= {
+			inst("UICorner", { CornerRadius = UDim.new(0.3, 0) }),
+
+		}
+	},pfp)
+
+	local main = inst("Frame", {
+		Name = "Main",
+		Size = UDim2.fromScale(1, 1),
+		Position = UDim2.fromScale(0.5, 0.5),
+		AnchorPoint = Vector2.new(0.5, 0.5),
+		BackgroundColor3 = Color3.fromRGB(255, 255, 255),
+		BorderSizePixel = 0,
+		Visible = true,
+		Children = {
+			inst("UIGradient", {
+				Color = ColorSequence.new({
+					ColorSequenceKeypoint.new(0, Color3.fromRGB(31, 31, 31)),
+					ColorSequenceKeypoint.new(1, Color3.fromRGB(34, 34, 34))
+				}),
+				Rotation = 50
+			})
+		}
+	}, googoogaga)
+
+	local Holder = inst("Frame", {
+		Name = "Holder",
+		BorderSizePixel = 0,
+		Size = UDim2.fromScale(0.96, 0.895),
+		Position = UDim2.fromScale(0.5, 0.08),
+		AnchorPoint = Vector2.new(0.5, -1),
+		BackgroundTransparency = 0,
+		BackgroundColor3 = Color3.fromRGB(38, 38, 38),
+		ZIndex = 12221,
+		Children = {
+			inst("UICorner", { CornerRadius = UDim.new(0.01, 0) })
+		}
+	}, main)
+
+	local buttonCorner = inst("UICorner", {
+		CornerRadius = UDim.new(0.01, 0),
+	}, googoogaga)
+
+	local bar = inst("Frame", {
+		Name = "bar",
+		BorderSizePixel = 0,
+		Size = UDim2.fromScale(1, 0.12),
+		Position = UDim2.fromScale(0.5, 0.01),
+		AnchorPoint = Vector2.new(0.5, -1),
+		BackgroundTransparency = 1
+	}, Holder)
+
+	local MainHolder = inst("Frame", {
+		Name = "TabHolders",
+		BorderSizePixel = 0,
+		Size = UDim2.fromScale(0.98, 0.899),
+		Position = UDim2.fromScale(0.5, 0.09),
+		AnchorPoint = Vector2.new(0.5, -1),
+		BackgroundTransparency = 1,
+		BackgroundColor3 = Color3.fromRGB(31, 31, 31),
+	}, Holder)
+
+	local tabs = {}
+	local activeTab = nil
+	local tabOrder = 0
+
+	local ToolTip = inst("TextLabel", {
+		Name = "ToolTip",
+		Size = UDim2.fromOffset(200, 20),
+		Position = UDim2.fromScale(0, 0),
+		BackgroundColor3 = Color3.fromRGB(0, 0, 0),
+		BorderSizePixel = 1,
+		BorderColor3 = Color3.fromRGB(25, 25, 25),
+		TextSize = 14,
+		BackgroundTransparency = 0.4,
+		TextWrapped = true,
+		TextColor3 = Color3.fromRGB(255, 255, 255),
+		Font = Enum.Font.SourceSansSemibold,
+		TextXAlignment = Enum.TextXAlignment.Center,
+		Visible = false,
+		ZIndex = 20,
+		Children = {
+			inst("UIStroke", { Color = Color3.fromRGB(25, 25, 25), Thickness = 1 }),
+			inst("UICorner", { CornerRadius = UDim.new(0, 5) })
+		}
+	}, googoogaga.Parent) -- Changed to target (ScreenGui) instead of googoogaga.Parent
+
+	-- Function to update tooltip size based on text
+	local function updateTooltipSize(text)
+		local textSize = TextService:GetTextSize(
+			text,
+			14,
+			Enum.Font.SourceSansSemibold,
+			Vector2.new(1000, 1000)
+		)
+		local padding = 10
+		ToolTip.Size = UDim2.fromOffset(textSize.X + padding, textSize.Y + padding)
+	end
+
+	-- Function to update tooltip position to follow mouse
+	local mouseConnection
+	local currentTween
+	local function startTooltipTracking(text, textColor)
+		if mouseConnection then
+			mouseConnection:Disconnect()
+		end
+		if currentTween then
+			currentTween:Cancel()
+		end
+		updateTooltipSize(text)
+		ToolTip.Text = text
+		ToolTip.TextColor3 = textColor or Color3.fromRGB(255, 255, 255) -- Default to white if no color provided
+		ToolTip.Visible = true
+		mouseConnection = UserInputService.InputChanged:Connect(function(input)
+			if input.UserInputType == Enum.UserInputType.MouseMovement then
+				local mousePos = input.Position
+				local offsetX, offsetY = 10, 20 -- Offset from cursor
+				local targetPos = UDim2.fromOffset(mousePos.X + offsetX, mousePos.Y + offsetY)
+				currentTween = twen.fortnite(ToolTip, { Position = targetPos }, "Quad", { Duration = 0.1 })
+			end
+		end)
+	end
+
+	-- Function to stop tooltip tracking
+	local function stopTooltipTracking()
+		if mouseConnection then
+			mouseConnection:Disconnect()
+			mouseConnection = nil
+		end
+		ToolTip.Visible = false
+	end
+
+	-- Example usage: Add to buttons or elements for hover effect
+	local function addTooltipToElement(element, tooltipText, textColor)
+		element.MouseEnter:Connect(function()
+			startTooltipTracking(tooltipText, textColor)
+		end)
+		element.MouseLeave:Connect(function()
+			stopTooltipTracking()
+		end)
+	end
+
+
+	local function createTab(Text, color)
+		tabOrder = tabOrder + 1
+
+		local button = inst("TextButton", {
+			Name = "TabButton_" .. Text,
+			Size = UDim2.fromScale(0, 0.6),
+			AnchorPoint = Vector2.new(0.5, 0.5),
+			BackgroundColor3 = Color3.fromRGB(31, 31, 31),
+			Text = "",
+			TextColor3 = Color3.fromRGB(255, 255, 255),
+			Font = Enum.Font.SourceSans,
+			TextScaled = true,
+			AutoButtonColor = false,
+			BackgroundTransparency = 0,
+			LayoutOrder = tabOrder,
+			Children = {
+				inst("TextLabel", {
+					Name = "Title",
+					BorderSizePixel = 0,
+					Size = UDim2.fromScale(1, 0.5),
+					Position = UDim2.fromScale(0.5, 0.5),
+					AnchorPoint = Vector2.new(0.5, 0.5),
+					BackgroundTransparency = 1,
+					Text = Text,
+					TextScaled = false,
+					TextSize = 16,
+					TextColor3 = color or Color3.fromRGB(255, 255, 255),
+					TextTransparency = 0.7,
+					Font = Enum.Font.SourceSansSemibold,
+				}),
+				inst("UICorner", { CornerRadius = UDim.new(0.2, 0) }),
+				inst("UIPadding", {
+					PaddingLeft = UDim.new(0, 8),
+					PaddingRight = UDim.new(0, 8),
+				})
+			}
+		}, bar.Scroll)
+
+		local textSize = TextService:GetTextSize(
+			Text,
+			16,
+			Enum.Font.SourceSansSemibold,
+			Vector2.new(1000, 1000)
+		)
+		local extraPadding = 16
+		button.Size = UDim2.new(0, textSize.X + extraPadding, 0.6, 0)
+
+		local tabFrame = inst("Frame", {
+			Name = Text,
+			BorderSizePixel = 0,
+			Size = UDim2.fromScale(1, 1),
+			Position = UDim2.fromScale(0.5, 0.5),
+			AnchorPoint = Vector2.new(0.5, 0.5),
+			BackgroundTransparency = 0,
+			BackgroundColor3 = Color3.fromRGB(31, 31, 31),
+			Visible = false,
+			Children = {
+				inst("UICorner", { CornerRadius = UDim.new(0.012, 0) })
+			}
+		}, MainHolder)
+
+		local scroller = inst("ScrollingFrame", {
+			Name = "Scroller",
+			BorderSizePixel = 0,
+			Size = UDim2.fromScale(0.97, 0.95),
+			Position = UDim2.fromScale(0.5, 0.5),
+			AnchorPoint = Vector2.new(0.5, 0.5),
+			BackgroundTransparency = 1,
+			CanvasSize = UDim2.new(1, 0, 0, 0),
+			ScrollingDirection = Enum.ScrollingDirection.Y,
+			AutomaticCanvasSize = Enum.AutomaticSize.Y,
+			ScrollBarThickness = 0,
+			ScrollBarImageTransparency = 1,
+			Children = {
+				inst("UIListLayout", {
+					Padding = UDim.new(0.01, 0),
+					FillDirection = Enum.FillDirection.Horizontal,
+					VerticalAlignment = Enum.VerticalAlignment.Top,
+					HorizontalAlignment = Enum.HorizontalAlignment.Left,
+					Wraps = true,
+				}),
+				inst("UIPadding", {
+					PaddingLeft = UDim.new(0, 5),
+					PaddingRight = UDim.new(0, 5),
+					PaddingTop = UDim.new(0, 5),
+					PaddingBottom = UDim.new(0, 5),
+				})
+			}
+		}, tabFrame)
+
+		local tabInfo = {
+			Button = button,
+			Container = tabFrame
+		}
+		tabs[Text] = tabInfo
+
+		scroller:GetPropertyChangedSignal("CanvasPosition"):Connect(function()
+			-- Close any open dropdown when scrolling
+			if currentOpenDropdown and currentOpenDropdown.Menu then
+				local prevMenu = currentOpenDropdown.Menu
+				local prevArrow = currentOpenDropdown.Button and currentOpenDropdown.Button:FindFirstChild("Arrow")
+				if prevMenu then
+					twen.fortnite(prevMenu, {Size = UDim2.fromOffset(119, 0)}, "Linear", {
+						Duration = 0.1,
+						Callback = function()
+							prevMenu.Visible = false
+							currentOpenDropdown = nil
+						end
+					})
+				end
+				if prevArrow then
+					twen.fortnite(prevArrow, {Rotation = 0}, "Linear", {Duration = 0.1})
+				end
+			end
+
+			-- Close any open color picker when scrolling and reset to original value
+			if currentOpenColorPicker then
+				local prevPopup = currentOpenColorPicker.Popup
+				if prevPopup then
+					-- Reset color picker to original value without calling callback
+					local originalValue = currentOpenColorPicker.OriginalValue
+					if originalValue then
+						currentOpenColorPicker.Value = originalValue
+
+						-- Update visual elements without animation
+						twen.fortnite(currentOpenColorPicker.PickerButton, {BackgroundColor3 = originalValue}, "Linear", {Duration = 0.1})
+
+						-- Update textboxes
+						local colorPopup = currentOpenColorPicker.Popup
+						local hexTextbox = colorPopup and colorPopup:FindFirstChild("TextboxFrame") and colorPopup.TextboxFrame:FindFirstChild("HexTextbox")
+						local rgbFrame = colorPopup and colorPopup:FindFirstChild("RGBTextbox")
+						local rgbTextbox = rgbFrame and rgbFrame:FindFirstChild("RGBTextbox")
+
+						if hexTextbox then
+							hexTextbox.Text = string.format("#%02X%02X%02X", originalValue.R * 255, originalValue.G * 255, originalValue.B * 255)
+							hexTextbox.TextColor3 = originalValue
+						end
+						if rgbTextbox then
+							rgbTextbox.Text = string.format("%d,%d,%d", originalValue.R * 255, originalValue.G * 255, originalValue.B * 255)
+							rgbTextbox.TextColor3 = originalValue
+						end
+					end
+
+					twen.fortnite(prevPopup, {Size = UDim2.fromOffset(170, 0)}, "Linear", {
+						Duration = 0.1,
+						Callback = function()
+							prevPopup.Visible = false
+							currentOpenColorPicker = nil
+						end
+					})
+				end
+			end
+		end)
+
+		local function showTab()
+			if activeTab and activeTab ~= tabInfo then
+				activeTab.Container.Visible = false
+				twen.fortnite(activeTab.Button, {BackgroundColor3 = Color3.fromRGB(31, 31, 31)}, "Linear", {Duration = 0.1})
+				local prevTitle = activeTab.Button:FindFirstChild("Title")
+				if prevTitle then
+					twen.fortnite(prevTitle, {TextTransparency = 0.7}, "Linear", {Duration = 0.1})
+				end
+			end
+
+			-- Close any open dropdown when switching tabs
+			if currentOpenDropdown then
+				local prevMenu = currentOpenDropdown.Menu or currentOpenDropdown.Popup
+				local prevArrow = currentOpenDropdown.Button and currentOpenDropdown.Button:FindFirstChild("Arrow")
+				if prevMenu then
+					twen.fortnite(prevMenu, {Size = UDim2.fromOffset(prevMenu.Size.X.Offset, 0)}, "Linear", {
+						Duration = 0.1,
+						Callback = function()
+							prevMenu.Visible = false
+						end
+					})
+				end
+				if prevArrow then
+					twen.fortnite(prevArrow, {Rotation = 0}, "Linear", {Duration = 0.1})
+				end
+				currentOpenDropdown = nil
+			end
+
+			-- Close any open color picker when switching tabs
+			if currentOpenColorPicker then
+				local prevPopup = currentOpenColorPicker.Popup
+				if prevPopup then
+					twen.fortnite(prevPopup, {Size = UDim2.fromOffset(170, 0)}, "Linear", {
+						Duration = 0.1,
+						Callback = function()
+							prevPopup.Visible = false
+						end
+					})
+				end
+				currentOpenColorPicker = nil
+			end
+
+			tabInfo.Container.Visible = true
+			local currentTitle = button:FindFirstChild("Title")
+			if currentTitle then
+				twen.fortnite(currentTitle, {TextTransparency = 0}, "Linear", {Duration = 0.1})
+			end
+			activeTab = tabInfo
+		end
+
+		applyButtonAnimations(button,
+			Color3.fromRGB(31, 31, 31),
+			Color3.fromRGB(12, 12, 12),
+			Color3.fromRGB(47, 47, 47)
+		)
+
+		button.MouseButton1Up:Connect(function()
+			if activeTab ~= tabInfo then
+				showTab()
+			end
+		end)
+
+		if not activeTab then
+			showTab()
+		end
+
+		return tabInfo
+	end
+
+	local function createGroup(name, parentTabText)
+		local tabInfo = tabs[parentTabText]
+		if not tabInfo then
+			error("Tab " .. parentTabText .. " does not exist")
+		end
+		local scroller = tabInfo.Container:FindFirstChild("Scroller")
+		if not scroller then
+			error("Scroller not found in tab " .. parentTabText)
+		end
+
+		local group = inst("Frame", {
+			Name = name,
+			BorderSizePixel = 0,
+			Size = UDim2.fromScale(0.48, 0),
+			BackgroundTransparency = 0,
+			BackgroundColor3 = Color3.fromRGB(42,42,42),
+			ClipsDescendants = true,
+			AutomaticSize = Enum.AutomaticSize.Y,
+		}, scroller)
+
+		inst("UICorner", {
+			CornerRadius = UDim.new(0, 6),
+		}, group)
+
+		local titleLabel = inst("TextLabel", {
+			Name = "Title",
+			BorderSizePixel = 0,
+			Size = UDim2.new(1, 0, 0, 28),
+			Position = UDim2.fromOffset(0, 0),
+			BackgroundTransparency = 1,
+			BackgroundColor3 = Color3.fromRGB(42,42,42),
+			Text = name,
+			TextScaled = true,
+			TextSize = 14,
+			TextColor3 = Color3.fromRGB(255, 255, 255),
+			Font = Enum.Font.SourceSansSemibold,
+			TextXAlignment = Enum.TextXAlignment.Left,
+		}, group)
+
+		inst("UIPadding", {
+			PaddingLeft = UDim.new(0.04, 0),
+			PaddingTop = UDim.new(0, 7),
+			PaddingBottom = UDim.new(0, 7),
+		}, titleLabel)
+
+		inst("UIStroke", {
+			Color = Color3.fromRGB(31, 31, 31),
+			ApplyStrokeMode = Enum.ApplyStrokeMode.Border,
+			Thickness = 1.9
+		}, titleLabel)
+
+		local Holder = inst("Frame", {
+			Name = "Holder",
+			BorderSizePixel = 0,
+			Size = UDim2.new(1, 0, 0, 0),
+			Position = UDim2.new(0, 0, 0, 28),
+			BackgroundTransparency = 1,
+			BackgroundColor3 = Color3.fromRGB(232, 232, 232),
+			AutomaticSize = Enum.AutomaticSize.Y,
+		}, group)
+
+		inst("UIListLayout", {
+			Padding = UDim.new(0, 3),
+			FillDirection = Enum.FillDirection.Vertical,
+			HorizontalAlignment = Enum.HorizontalAlignment.Center,
+			VerticalAlignment = Enum.VerticalAlignment.Top,
+			SortOrder = Enum.SortOrder.LayoutOrder,
+		}, Holder)
+
+		inst("UIPadding", {
+			PaddingLeft = UDim.new(0, 12),
+			PaddingRight = UDim.new(0, 12),
+			PaddingTop = UDim.new(0, 8),
+			PaddingBottom = UDim.new(0, 7),
+		}, Holder)
+
+
+		local groupObj = {}
+
+		function groupObj:AddToggle(labelOrTable, callback, initialState)
+			local label, cb, defaultState, allowKeybind
+			if type(labelOrTable) == "table" then
+				label = labelOrTable.Text or "Toggle"
+				cb = labelOrTable.Callback or callback
+				defaultState = labelOrTable.Default or labelOrTable.InitialState or initialState
+				allowKeybind = labelOrTable.Keybind or false
+			else
+				label = labelOrTable
+				cb = callback
+				defaultState = initialState
+				allowKeybind = false
+			end
+			local toggle = createToggleButton(Holder, label, cb, defaultState, allowKeybind)
+			return toggle
+		end
+
+		function groupObj:AddLabel(labelOrTable)
+			local label, cb
+			if type(labelOrTable) == "table" then
+				label = labelOrTable.Text or "Button"
+			else
+				label = labelOrTable
+			end
+			local btn = createLabel(Holder, label)
+			return btn
+		end
+
+		function groupObj:AddButton(labelOrTable, callback)
+			local label, cb
+			if type(labelOrTable) == "table" then
+				label = labelOrTable.Text or "Button"
+				cb = labelOrTable.Callback or callback
+			else
+				label = labelOrTable
+				cb = callback
+			end
+			local btn = createSimpleButton(Holder, label, cb)
+			return btn
+		end
+
+		function groupObj:AddSlider(labelOrTable, callback, min, max, default, suffix)
+			local label, cb, minVal, maxVal, defaultVal, suffixVal
+			if type(labelOrTable) == "table" then
+				label = labelOrTable.Text or "Slider"
+				cb = labelOrTable.Callback or callback
+				minVal = labelOrTable.Min or min or 0
+				maxVal = labelOrTable.Max or max or 100
+				defaultVal = labelOrTable.Default or default or minVal
+				suffixVal = labelOrTable.Suffix or suffix or ""
+			else
+				label = labelOrTable or "Slider"
+				cb = callback
+				minVal = min or 0
+				maxVal = max or 100
+				defaultVal = default or minVal
+				suffixVal = suffix or ""
+			end
+			local slider = createSlider(Holder, label, cb, minVal, maxVal, defaultVal, suffixVal)
+			return slider
+		end
+
+		function groupObj:AddKeypicker(labelOrTable, callback, defaultKey)
+			local label, cb, defaultKeyVal
+			if type(labelOrTable) == "table" then
+				label = labelOrTable.Text or "Keypicker"
+				cb = labelOrTable.Callback or callback
+				defaultKeyVal = labelOrTable.Default or labelOrTable.DefaultKey or defaultKey
+			else
+				label = labelOrTable
+				cb = callback
+				defaultKeyVal = defaultKey
+			end
+			local keypicker = createKeypicker(Holder, label, cb, defaultKeyVal)
+			return keypicker
+		end
+
+		function groupObj:AddDropdown(labelOrTable, callback, values, default, multi, maxVisibleItems)
+			local label, cb, vals, defaultVal, isMulti, maxItems
+			if type(labelOrTable) == "table" then
+				label = labelOrTable.Text or "Dropdown"
+				cb = labelOrTable.Callback or callback
+				vals = labelOrTable.Values or values or {}
+				defaultVal = labelOrTable.Default or default or (vals[1] or "")
+				isMulti = labelOrTable.Multi or multi or false
+				maxItems = labelOrTable.MaxVisibleItems or maxVisibleItems or 8
+			else
+				label = labelOrTable or "Dropdown"
+				cb = callback
+				vals = values or {}
+				defaultVal = default or (vals[1] or "")
+				isMulti = multi or false
+				maxItems = maxVisibleItems or 8
+			end
+
+			local DropdownFrame = inst("Frame", {
+				Name = "DropdownHolder",
+				BorderSizePixel = 0,
+				Size = UDim2.fromOffset(237, 28),
+				AnchorPoint = Vector2.new(0.5, 0),
+				BackgroundTransparency = 0,
+				BackgroundColor3 = Color3.fromRGB(31, 31, 31),
+				Children = {
+					inst("UICorner", { CornerRadius = UDim.new(0.2, 0) }),
+					inst("TextLabel", {
+						Name = "Title",
+						BorderSizePixel = 0,
+						Size = UDim2.fromScale(1, 0.5),
+						AnchorPoint = Vector2.new(0.5, 0.5),
+						Position = UDim2.fromScale(0.54, 0.5),
+						BackgroundTransparency = 1,
+						BackgroundColor3 = Color3.fromRGB(44, 44, 44),
+						Text = label,
+						TextScaled = true,
+						TextSize = 14,
+						TextColor3 = Color3.fromRGB(255, 255, 255),
+						Font = Enum.Font.SourceSansSemibold,
+						TextXAlignment = Enum.TextXAlignment.Left,
+					})
+				}
+			}, Holder)
+
+			local ContextMainFrame = inst("Frame", {
+				Name = "ContextFrame",
+				BorderSizePixel = 0,
+				Size = UDim2.fromOffset(119, 50),
+				AnchorPoint = Vector2.new(0, -1),
+				Position = UDim2.fromScale(0.265, 0.327),
+				BackgroundTransparency = 0,
+				ClipsDescendants = true,
+				BackgroundColor3 = Color3.fromRGB(42, 42, 42),
+				Visible = false,
+				Parent = googoogaga,
+				Children = {
+					inst("UICorner", { CornerRadius = UDim.new(0, 4) }),
+					inst("UIStroke", {
+						Color = Color3.fromRGB(25, 25, 25),
+						ApplyStrokeMode = Enum.ApplyStrokeMode.Border,
+						Transparency = 0
+					}),
+					inst("UIListLayout", {
+						Padding = UDim.new(0, 1),
+						FillDirection = Enum.FillDirection.Vertical,
+						HorizontalAlignment = Enum.HorizontalAlignment.Center,
+					}),
+					inst("UIPadding", {
+						PaddingLeft = UDim.new(0, 4),
+						PaddingRight = UDim.new(0, 4),
+						PaddingTop = UDim.new(0, 4),
+						PaddingBottom = UDim.new(0, 4),
+					})
+				}
+			})
+
+			local button = inst("TextButton", {
+				Name = "DropdownButton",
+				BorderSizePixel = 0,
+				Size = UDim2.fromScale(0.5, 0.6),
+				AnchorPoint = Vector2.new(0.5, -1),
+				Position = UDim2.fromScale(0.73, 0.2),
+				BackgroundTransparency = 0,
+				BackgroundColor3 = Color3.fromRGB(42, 42, 42),
+				AutoButtonColor = false,
+				Text = "",
+				Children = {
+					inst("UICorner", { CornerRadius = UDim.new(0.2, 0) }),
+					inst("UIStroke", {
+						Color = Color3.fromRGB(25, 25, 25),
+						ApplyStrokeMode = Enum.ApplyStrokeMode.Border,
+						Transparency = 0
+					}),
+					inst("TextLabel", {
+						Name = "Selected",
+						BorderSizePixel = 0,
+						Size = UDim2.fromScale(1, 0.7),
+						AnchorPoint = Vector2.new(0.5, 0.5),
+						Position = UDim2.fromScale(0.54, 0.5),
+						BackgroundTransparency = 1,
+						BackgroundColor3 = Color3.fromRGB(44, 44, 44),
+						Text = "",
+						TextScaled = true,
+						ClipsDescendants = true,
+						TextSize = 14,
+						TextColor3 = Color3.fromRGB(255, 255, 255),
+						Font = Enum.Font.SourceSansSemibold,
+						TextXAlignment = Enum.TextXAlignment.Left,
+					}),
+					inst("ImageLabel", {
+						Name = "Arrow",
+						Size = UDim2.fromScale(0.12, 0.15),
+						Position = UDim2.fromScale(0.92, 0.5),
+						AnchorPoint = Vector2.new(0.5, 0.5),
+						BackgroundTransparency = 1,
+						Rotation = 0,
+						SizeConstraint = Enum.SizeConstraint.RelativeXX,
+						ImageTransparency = 0,
+						Image = "rbxassetid://116068720797786",
+						ImageColor3 = Color3.fromRGB(255, 255, 255),
+						ScaleType = Enum.ScaleType.Stretch,
+					})
+				}
+			}, DropdownFrame)
+
+			applyButtonAnimations(button, 
+				Color3.fromRGB(42, 42, 42),
+				Color3.fromRGB(53, 53, 53),
+				Color3.fromRGB(24, 24, 24)
+			)
+
+			local dropdownObj = {
+				Values = vals,
+				Value = isMulti and {} or defaultVal,
+				Multi = isMulti,
+				MaxVisibleItems = maxItems,
+				Callback = cb,
+				Menu = ContextMainFrame,
+				Button = button,
+			}
+
+			local function updateText()
+				local selectedLabel = button:FindFirstChild("Selected")
+				if selectedLabel then
+					if dropdownObj.Multi then
+						local sortedValues = {}
+						for _, v in ipairs(dropdownObj.Value) do
+							table.insert(sortedValues, v)
+						end
+						table.sort(sortedValues, function(a, b)
+							local numA = tonumber(a)
+							local numB = tonumber(b)
+							if numA and numB then
+								return numA < numB
+							end
+							return tostring(a) < tostring(b)
+						end)
+
+						-- Modified logic here
+						if #sortedValues == 0 then
+							selectedLabel.Text = "None"
+						elseif #sortedValues == 1 then
+							selectedLabel.Text = sortedValues[1]
+						else
+							selectedLabel.Text = "{Multiple Selected}"
+						end
+					else
+						selectedLabel.Text = dropdownObj.Value or "None"
+					end
+				end
+			end
+
+
+			local function recalculateMenuSize()
+				local itemHeight = 20
+				local itemCount = math.min(#dropdownObj.Values, dropdownObj.MaxVisibleItems)
+				local newHeight = itemCount * (itemHeight + 1) + 8
+				twen.fortnite(ContextMainFrame, {Size = UDim2.fromOffset(119, newHeight)}, "Linear", {Duration = 0.1})
+			end
+
+			local function buildMenu()
+				ContextMainFrame:ClearAllChildren()
+				inst("UICorner", { CornerRadius = UDim.new(0, 4) }, ContextMainFrame)
+				inst("UIStroke", {
+					Color = Color3.fromRGB(25, 25, 25),
+					ApplyStrokeMode = Enum.ApplyStrokeMode.Border,
+					Transparency = 0
+				}, ContextMainFrame)
+				inst("UIListLayout", {
+					Padding = UDim.new(0, 1),
+					FillDirection = Enum.FillDirection.Vertical,
+					HorizontalAlignment = Enum.HorizontalAlignment.Center,
+				}, ContextMainFrame)
+				inst("UIPadding", {
+					PaddingLeft = UDim.new(0, 4),
+					PaddingRight = UDim.new(0, 4),
+					PaddingTop = UDim.new(0, 4),
+					PaddingBottom = UDim.new(0, 4),
+				}, ContextMainFrame)
+
+				for _, value in ipairs(dropdownObj.Values) do
+					local isSelected = dropdownObj.Multi and table.find(dropdownObj.Value, value) or (not dropdownObj.Multi and tostring(value) == tostring(dropdownObj.Value))
+					local optionButton = inst("TextButton", {
+						BorderSizePixel = 0,
+						Size = UDim2.new(1, 0, 0, 20),
+						BackgroundTransparency = 0,
+						BackgroundColor3 = Color3.fromRGB(42, 42, 42),
+						AutoButtonColor = false,
+						Text = tostring(value),
+						TextScaled = false,
+						TextSize = 12,
+						TextXAlignment = Enum.TextXAlignment.Left,
+						TextColor3 = Color3.fromRGB(255, 255, 255),
+						Font = Enum.Font.SourceSansSemibold,
+						TextTransparency = isSelected and 0 or 0.5,
+						Children = {
+							inst("UICorner", { CornerRadius = UDim.new(0, 4) }),
+							inst("UIPadding", { PaddingLeft = UDim.new(0, 5) }),
+							inst("Frame", {
+								Name = "CheckedFrame",
+								Size = UDim2.fromScale(0.15, 0.15),
+								SizeConstraint = Enum.SizeConstraint.RelativeXX,
+								AnchorPoint = Vector2.new(0.5, 0.5),
+								Position = UDim2.fromScale(0.9, 0.5),
+								BackgroundColor3 = Color3.fromRGB(182, 255, 175),
+								BackgroundTransparency = isSelected and 0.95 or 0.95,
+								Visible = isSelected,
+								Children = {
+
+									inst("UICorner", { CornerRadius = UDim.new(0.2, 0) }),
+									inst("ImageLabel", {
+										Name = "image",
+										Size = UDim2.fromScale(0.35, 0.35),
+										Position = UDim2.fromScale(0.5, 0.5),
+										AnchorPoint = Vector2.new(0.5, 0.5),
+										BackgroundTransparency = 1,
+										ImageTransparency = 0,
+										Image = "rbxassetid://12690727184",
+										ImageColor3 = Color3.fromRGB(166, 255, 142),
+										ScaleType = Enum.ScaleType.Stretch,
+									}),
+
+								}
+							})
+						}
+					}, ContextMainFrame)
+
+					applyButtonAnimations(optionButton,
+						Color3.fromRGB(42, 42, 42),
+						Color3.fromRGB(31, 31, 31),
+						Color3.fromRGB(13, 13, 13)
+					)
+
+					optionButton.MouseButton1Click:Connect(function()
+						local checkedFrame = optionButton:FindFirstChild("CheckedFrame")
+						if dropdownObj.Multi then
+							local index = table.find(dropdownObj.Value, value)
+							if index then
+								table.remove(dropdownObj.Value, index)
+								optionButton.TextTransparency = 0.5
+								if checkedFrame then
+									checkedFrame.Visible = false
+								end
+							else
+								table.insert(dropdownObj.Value, value)
+								optionButton.TextTransparency = 0
+								if checkedFrame then
+									checkedFrame.Visible = true
+								end
+							end
+						else
+							dropdownObj.Value = value
+							twen.fortnite(ContextMainFrame, {Size = UDim2.fromOffset(119, 0)}, "Linear", {
+								Duration = 0.1,
+								Callback = function()
+									ContextMainFrame.Visible = false
+									currentOpenDropdown = nil
+								end
+							})
+							twen.fortnite(button:FindFirstChild("Arrow"), {Rotation = 0}, "Linear", {Duration = 0.1})
+							for _, btn in ipairs(ContextMainFrame:GetChildren()) do
+								if btn:IsA("TextButton") then
+									local isSelected = btn.Text == tostring(value)
+									btn.TextTransparency = isSelected and 0 or 0.5
+									local btnCheckedFrame = btn:FindFirstChild("CheckedFrame")
+									if btnCheckedFrame then
+										btnCheckedFrame.Visible = isSelected
+									end
+								end
+							end
+						end
+						updateText()
+						if dropdownObj.Callback then
+							dropdownObj.Callback(dropdownObj.Value)
+						end
+					end)
+				end
+				recalculateMenuSize()
+			end
+
+			function dropdownObj:SetValues(newValues)
+				dropdownObj.Values = newValues or {}
+				dropdownObj.Value = dropdownObj.Multi and {} or (dropdownObj.Values[1] or "")
+				buildMenu()
+				updateText()
+				if dropdownObj.Callback then
+					dropdownObj.Callback(dropdownObj.Value)
+				end
+			end
+
+			function dropdownObj:SetValue(newValue)
+				if dropdownObj.Multi then
+					if type(newValue) == "table" then
+						dropdownObj.Value = newValue
+					else
+						local index = table.find(dropdownObj.Value, newValue)
+						if index then
+							table.remove(dropdownObj.Value, index)
+						else
+							table.insert(dropdownObj.Value, newValue)
+						end
+					end
+				else
+					dropdownObj.Value = newValue
+				end
+				updateText()
+				buildMenu()
+				if dropdownObj.Callback then
+					dropdownObj.Callback(dropdownObj.Value)
+				end
+			end
+
+			local function toggleMenu()
+				local itemHeight = 20
+				local itemCount = math.min(#dropdownObj.Values, dropdownObj.MaxVisibleItems)
+				local fullHeight = itemCount * (itemHeight + 1) + 8
+				local isOpen = not ContextMainFrame.Visible
+
+				if isOpen then
+					-- Close any previously open dropdown
+					if currentOpenDropdown and currentOpenDropdown ~= dropdownObj then
+						local prevMenu = currentOpenDropdown.Menu
+						local prevArrow = currentOpenDropdown.Button:FindFirstChild("Arrow")
+						if prevMenu then
+							twen.fortnite(prevMenu, {Size = UDim2.fromOffset(119, 0)}, "Linear", {
+								Duration = 0.1,
+								Callback = function()
+									prevMenu.Visible = false
+								end
+							})
+						end
+						if prevArrow then
+							twen.fortnite(prevArrow, {Rotation = 0}, "Linear", {Duration = 0.1})
+						end
+						currentOpenDropdown = nil
+					end
+					-- Open the current dropdown
+					currentOpenDropdown = dropdownObj
+					-- Position the dropdown menu below the button
+					local buttonAbsPos = button.AbsolutePosition
+					local buttonAbsSize = button.AbsoluteSize
+					local parentAbsPos = googoogaga.AbsolutePosition
+					local parentAbsSize = googoogaga.AbsoluteSize
+					local relativeX = (buttonAbsPos.X - parentAbsPos.X) / parentAbsSize.X
+					local relativeY = (buttonAbsPos.Y - parentAbsPos.Y + buttonAbsSize.Y) / parentAbsSize.Y + 0.005
+					ContextMainFrame.Position = UDim2.fromScale(relativeX, relativeY)
+					-- Set initial size and make visible before expanding
+					ContextMainFrame.Size = UDim2.fromOffset(119, 0)
+					ContextMainFrame.Visible = true
+					twen.fortnite(ContextMainFrame, {Size = UDim2.fromOffset(119, fullHeight)}, "Linear", {Duration = 0.1})
+					local arrow = button:FindFirstChild("Arrow")
+					if arrow then
+						twen.fortnite(arrow, {Rotation = 180}, "Linear", {Duration = 0.1})
+					end
+				else
+					-- Close the current dropdown
+					if currentOpenDropdown == dropdownObj then
+						twen.fortnite(ContextMainFrame, {Size = UDim2.fromOffset(119, 0)}, "Linear", {
+							Duration = 0.1,
+							Callback = function()
+								ContextMainFrame.Visible = false
+								currentOpenDropdown = nil
+							end
+						})
+						local arrow = button:FindFirstChild("Arrow")
+						if arrow then
+							twen.fortnite(arrow, {Rotation = 0}, "Linear", {Duration = 0.1})
+						end
+					end
+				end
+			end
+
+			button.MouseButton1Click:Connect(toggleMenu)
+
+			local inputConnection
+			inputConnection = UserInputService.InputBegan:Connect(function(input, gameProcessed)
+				if gameProcessed then return end
+				if input.UserInputType == Enum.UserInputType.MouseButton1 and ContextMainFrame.Visible then
+					local mousePos = Vector2.new(input.Position.X, input.Position.Y)
+					local framePos = ContextMainFrame.AbsolutePosition
+					local frameSize = ContextMainFrame.AbsoluteSize
+					if mousePos.X < framePos.X or mousePos.X > framePos.X + frameSize.X or
+						mousePos.Y < framePos.Y or mousePos.Y > framePos.Y + frameSize.Y then
+						twen.fortnite(ContextMainFrame, {Size = UDim2.fromOffset(119, 0)}, "Linear", {
+							Duration = 0.1,
+							Callback = function()
+								ContextMainFrame.Visible = false
+								currentOpenDropdown = nil
+							end
+						})
+						twen.fortnite(button:FindFirstChild("Arrow"), {Rotation = 0}, "Linear", {Duration = 0.1})
+					end
+				end
+			end)
+
+			DropdownFrame.AncestryChanged:Connect(function()
+				if not DropdownFrame:IsDescendantOf(game) then
+					if inputConnection then
+						inputConnection:Disconnect()
+					end
+					if ContextMainFrame then
+						ContextMainFrame:Destroy()
+					end
+				end
+			end)
+
+			updateText()
+			buildMenu()
+
+			return DropdownFrame
+		end
+
+		function groupObj:AddColorPicker(labelOrTable, callback, defaultColor)
+			local label, cb, defaultCol
+			if type(labelOrTable) == "table" then
+				label = labelOrTable.Text or "Color Picker"
+				cb = labelOrTable.Callback or callback
+				defaultCol = labelOrTable.Default or defaultColor
+			else
+				label = labelOrTable or "Color Picker"
+				cb = callback
+				defaultCol = defaultColor
+			end
+
+			local ColorPickerHolder = inst("Frame", {
+				Name = "ColorPickerHolder",
+				BorderSizePixel = 0,
+				Size = UDim2.fromOffset(237, 28),
+				AnchorPoint = Vector2.new(0.5, 0),
+				BackgroundTransparency = 0,
+				BackgroundColor3 = Color3.fromRGB(31, 31, 31),
+				Children = {
+					inst("UICorner", { CornerRadius = UDim.new(0.2, 0) }),
+					inst("TextLabel", {
+						Name = "Title",
+						BorderSizePixel = 0,
+						Size = UDim2.fromScale(1, 0.5),
+						AnchorPoint = Vector2.new(0.5, 0.5),
+						Position = UDim2.fromScale(0.54, 0.5),
+						BackgroundTransparency = 1,
+						BackgroundColor3 = Color3.fromRGB(44, 44, 44),
+						Text = label,
+						TextScaled = true,
+						TextSize = 14,
+						TextColor3 = Color3.fromRGB(255, 255, 255),
+						Font = Enum.Font.SourceSansSemibold,
+						TextXAlignment = Enum.TextXAlignment.Left,
+					})
+				}
+			}, Holder)
+
+			local pickerButton = inst("TextButton", {
+				Name = "PickerButton",
+				BorderSizePixel = 0,
+				Size = UDim2.fromOffset(15, 15),
+				AnchorPoint = Vector2.new(1, 0.5),
+				Position = UDim2.fromScale(0.976, 0.5),
+				BackgroundTransparency = 0,
+				BackgroundColor3 = defaultCol or Color3.fromRGB(255, 131, 131),
+				AutoButtonColor = true,
+				Text = "",
+				TextColor3 = Color3.fromRGB(255, 255, 255),
+				Font = Enum.Font.SourceSansSemibold,
+				TextScaled = false,
+				TextSize = 11,
+				Children = {
+					inst("UICorner", { CornerRadius = UDim.new(0.3, 0) }),
+					inst("UIStroke", {
+						Color = Color3.fromRGB(25, 25, 25),
+						ApplyStrokeMode = Enum.ApplyStrokeMode.Border,
+						Transparency = 0
+					})
+				}
+			}, ColorPickerHolder)
+
+			local ColorPopup = inst("Frame", {
+				Name = "ColorPickerPopup",
+				BorderSizePixel = 0,
+				Size = UDim2.fromOffset(170, 0),
+				Position = UDim2.fromScale(0.5, 0.5),
+				AnchorPoint = Vector2.new(0.5, 0.5),
+				BackgroundTransparency = 0,
+				ZIndex = 1000,
+				Visible = false,
+				BackgroundColor3 = Color3.fromRGB(31, 31, 31),
+				Parent = googoogaga,
+				Children = {
+					inst("UIStroke", {
+						Color = Color3.fromRGB(44, 44, 44),
+						Thickness = 1.2,
+						ApplyStrokeMode = Enum.ApplyStrokeMode.Border,
+						Transparency = 0
+					}),
+					inst("UICorner", { CornerRadius = UDim.new(0, 5) }),
+				}
+			})
+
+			local Color = inst("Frame", {
+				Name = "ColorPicker",
+				BorderSizePixel = 0,
+				Size = UDim2.fromOffset(150, 150),
+				SizeConstraint = Enum.SizeConstraint.RelativeXX,
+				Position = UDim2.fromScale(0.5, 0.035),
+				AnchorPoint = Vector2.new(0.5, -1),
+				BackgroundTransparency = 0,
+				ZIndex = 1000,
+				BackgroundColor3 = Color3.fromRGB(255, 255, 255),
+				Children = {
+					inst("UICorner", { CornerRadius = UDim.new(0, 5) }),
+					inst("UIGradient", {
+						Name = "HueSaturationGradient",
+						Color = ColorSequence.new({
+							ColorSequenceKeypoint.new(0, Color3.fromRGB(255, 255, 255)),
+							ColorSequenceKeypoint.new(1, Color3.fromRGB(255, 0, 4))
+						})
+					}),
+					inst("Frame", {
+						Name = "ValueFrame",
+						BackgroundColor3 = Color3.new(0, 0, 0),
+						BackgroundTransparency = 0,
+						Size = UDim2.fromScale(1, 1),
+						Children = {
+							inst("UICorner", { CornerRadius = UDim.new(0, 4) }),
+							inst("UIGradient", {
+								Name = "ValueGradient",
+								Color = ColorSequence.new(Color3.fromRGB(0, 0, 0)),
+								Rotation = -90,
+								Transparency = NumberSequence.new({
+									NumberSequenceKeypoint.new(0, 0),
+									NumberSequenceKeypoint.new(1, 1)
+								})
+							})
+						}
+					}),
+					inst("Frame", {
+						Name = "Pointer",
+						Size = UDim2.fromOffset(8, 8),
+						AnchorPoint = Vector2.new(0.5, 0.5),
+						Position = UDim2.fromScale(1, 0),
+						BackgroundColor3 = Color3.fromRGB(255, 255, 255),
+						BorderSizePixel = 0,
+						BackgroundTransparency = 1,
+						ZIndex = 1001,
+						Children = {
+							inst("UICorner", { CornerRadius = UDim.new(1, 0) }),
+							inst("UIStroke", {
+								Color = Color3.fromRGB(255, 255, 255),
+								Thickness = 1.6,
+								ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+							})
+						}
+					})
+				}
+			}, ColorPopup)
+
+			local ColorBar = inst("Frame", {
+				Name = "ColorBar",
+				BorderSizePixel = 0,
+				Size = UDim2.fromOffset(150, 10),
+				SizeConstraint = Enum.SizeConstraint.RelativeXX,
+				Position = UDim2.fromScale(0.5, 0.6),
+				AnchorPoint = Vector2.new(0.5, -1),
+				BackgroundTransparency = 0,
+				ZIndex = 1000,
+				BackgroundColor3 = Color3.fromRGB(255, 255, 255),
+				Children = {
+					inst("UICorner", { CornerRadius = UDim.new(0, 3) }),
+					inst("UIGradient", {
+						Name = "HueGradient",
+						Color = ColorSequence.new({
+							ColorSequenceKeypoint.new(0, Color3.fromRGB(255, 0, 0)),
+							ColorSequenceKeypoint.new(0.167, Color3.fromRGB(255, 255, 0)),
+							ColorSequenceKeypoint.new(0.333, Color3.fromRGB(0, 255, 0)),
+							ColorSequenceKeypoint.new(0.5, Color3.fromRGB(0, 255, 255)),
+							ColorSequenceKeypoint.new(0.667, Color3.fromRGB(0, 0, 255)),
+							ColorSequenceKeypoint.new(0.833, Color3.fromRGB(255, 0, 255)),
+							ColorSequenceKeypoint.new(1, Color3.fromRGB(255, 0, 0))
+						})
+					}),
+					inst("Frame", {
+						Name = "Pointer",
+						Size = UDim2.fromOffset(5, 5),
+						AnchorPoint = Vector2.new(0.5, 0.5),
+						Position = UDim2.fromScale(0.5, 0.5),
+						BackgroundColor3 = Color3.fromRGB(255, 255, 255),
+						BorderSizePixel = 0,
+						BackgroundTransparency = 0.3,
+						ZIndex = 1001,
+						Children = {
+							inst("UICorner", { CornerRadius = UDim.new(1, 0) }),
+							inst("UIStroke", {
+								Color = Color3.fromRGB(70, 70, 70),
+								Thickness = 1,
+								ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+							})
+						}
+					})
+				}
+			}, ColorPopup)
+
+			local HexFrame = inst("Frame", {
+				Name = "TextboxFrame",
+				BorderSizePixel = 0,
+				Size = UDim2.fromOffset(150, 25),
+				AnchorPoint = Vector2.new(0.5, -1),
+				Position = UDim2.fromScale(0.5, 0.67),
+				BackgroundTransparency = 0,
+				BackgroundColor3 = Color3.fromRGB(42, 42, 42),
+				Children = {
+					inst("UICorner", { CornerRadius = UDim.new(0, 3) }),
+					inst("UIStroke", { Color = Color3.fromRGB(25, 25, 25), Transparency = 0 })
+				}
+			}, ColorPopup)
+
+			local hexTextbox = inst("TextBox", {
+				Name = "HexTextbox",
+				BorderSizePixel = 0,
+				Size = UDim2.fromScale(1, 0.5),
+				AnchorPoint = Vector2.new(0.5, 0.5),
+				Position = UDim2.fromScale(0.5, 0.5),
+				BackgroundTransparency = 1,
+				TextColor3 = Color3.fromRGB(255, 255, 255),
+				Font = Enum.Font.SourceSansSemibold,
+				TextXAlignment = Enum.TextXAlignment.Left,
+				TextScaled = true,
+				Text = defaultCol and string.format("#%02X%02X%02X", defaultCol.R * 255, defaultCol.G * 255, defaultCol.B * 255) or "#FFFFFF",
+				PlaceholderText = "Put Hex Here:",
+				BackgroundColor3 = Color3.fromRGB(42, 42, 42),
+				ClearTextOnFocus = false,
+				Children = {
+					inst("UIPadding", {
+						PaddingLeft = UDim.new(0, 8),
+						PaddingRight = UDim.new(0, 8),
+					})
+				}
+			}, HexFrame)
+
+			local RGBTextbox = inst("Frame", {
+				Name = "TextboxFrame",
+				BorderSizePixel = 0,
+				Size = UDim2.fromOffset(150, 25),
+				AnchorPoint = Vector2.new(0.5, -1),
+				Position = UDim2.fromScale(0.5, 0.775),
+				BackgroundTransparency = 0,
+				BackgroundColor3 = Color3.fromRGB(42, 42, 42),
+
+				Children = {
+					inst("UICorner", { CornerRadius = UDim.new(0, 3) }),
+					inst("UIStroke", { Color = Color3.fromRGB(25, 25, 25), Transparency = 0 })
+				}
+			}, ColorPopup)
+
+			local rgbTextbox = inst("TextBox", {
+				Name = "RGBTextbox",
+				BorderSizePixel = 0,
+				Size = UDim2.fromScale(1, 0.5),
+				AnchorPoint = Vector2.new(0.5, 0.5),
+				Position = UDim2.fromScale(0.5, 0.5),
+				BackgroundTransparency = 1,
+				TextColor3 = Color3.fromRGB(255, 255, 255),
+				Font = Enum.Font.SourceSansSemibold,
+				TextXAlignment = Enum.TextXAlignment.Left,
+				TextScaled = true,
+				Text = defaultCol and string.format("%d,%d,%d", defaultCol.R * 255, defaultCol.G * 255, defaultCol.B * 255) or "255,0,0",
+				PlaceholderText = "Put RGB Here:",
+				BackgroundColor3 = Color3.fromRGB(42, 42, 42),
+				ClearTextOnFocus = false,
+				Children = {
+					inst("UIPadding", {
+						PaddingLeft = UDim.new(0, 8),
+						PaddingRight = UDim.new(0, 8),
+					})
+				}
+			}, RGBTextbox)
+
+			local copyRGB = inst("TextButton", {
+				Name = "CopyRGB",
+				BorderSizePixel = 0,
+				Size = UDim2.fromOffset(58, 23),
+				AnchorPoint = Vector2.new(0, -1),
+				Position = UDim2.fromScale(0.06, 0.88),
+				BackgroundTransparency = 0,
+				AutoButtonColor = false,
+				BackgroundColor3 = Color3.fromRGB(42, 42, 42),
+				Text = "",
+				Children = {
+					inst("TextLabel", {
+						Name = "Title",
+						BorderSizePixel = 0,
+						Size = UDim2.fromScale(1, 0.5),
+						Position = UDim2.fromScale(0.5, 0.5),
+						AnchorPoint = Vector2.new(0.5, 0.5),
+						BackgroundTransparency = 1,
+						Text = "Copy RGB",
+						TextScaled = true,
+						TextSize = 16,
+						TextColor3 = Color3.fromRGB(255, 255, 255),
+						TextTransparency = 0,
+						Font = Enum.Font.SourceSansSemibold,
+						TextXAlignment = Enum.TextXAlignment.Left,
+						Children = {
+							inst("UIPadding", {
+								PaddingLeft = UDim.new(0, 8),
+								PaddingRight = UDim.new(0, 8),
+							})
+						}
+					}),
+					inst("UICorner", { CornerRadius = UDim.new(0, 3) }),
+					inst("UIStroke", { Color = Color3.fromRGB(25, 25, 25), ApplyStrokeMode = Enum.ApplyStrokeMode.Border, Transparency = 0 })
+				}
+			}, ColorPopup)
+
+			local copyHex = inst("TextButton", {
+				Name = "CopyHex",
+				BorderSizePixel = 0,
+				Size = UDim2.fromOffset(58, 23),
+				AnchorPoint = Vector2.new(0, -1),
+				Position = UDim2.fromScale(0.423, 0.88),
+				BackgroundTransparency = 0,
+				AutoButtonColor = false,
+				BackgroundColor3 = Color3.fromRGB(42, 42, 42),
+				Text = "",
+				Children = {
+					inst("TextLabel", {
+						Name = "Title",
+						BorderSizePixel = 0,
+						Size = UDim2.fromScale(1, 0.5),
+						Position = UDim2.fromScale(0.5, 0.5),
+						AnchorPoint = Vector2.new(0.5, 0.5),
+						BackgroundTransparency = 1,
+						Text = "Copy HEX",
+						TextScaled = true,
+						TextSize = 16,
+						TextColor3 = Color3.fromRGB(255, 255, 255),
+						TextTransparency = 0,
+						Font = Enum.Font.SourceSansSemibold,
+						TextXAlignment = Enum.TextXAlignment.Left,
+						Children = {
+							inst("UIPadding", {
+								PaddingLeft = UDim.new(0, 8),
+								PaddingRight = UDim.new(0, 8),
+							})
+						}
+					}),
+					inst("UICorner", { CornerRadius = UDim.new(0, 3) }),
+					inst("UIStroke", { Color = Color3.fromRGB(25, 25, 25), ApplyStrokeMode = Enum.ApplyStrokeMode.Border, Transparency = 0 })
+				}
+			}, ColorPopup)
+
+			applyButtonAnimations(copyHex,
+				Color3.fromRGB(42, 42, 42),
+				Color3.fromRGB(53, 53, 53),
+				Color3.fromRGB(24, 24, 24)
+			)
+			applyButtonAnimations(copyRGB,
+				Color3.fromRGB(42, 42, 42),
+				Color3.fromRGB(53, 53, 53),
+				Color3.fromRGB(24, 24, 24)
+			)
+
+			local colorPickerObj = {
+				Value = defaultCol or Color3.fromRGB(255, 131, 131),
+				Callback = cb,
+				Popup = ColorPopup,
+				PickerButton = pickerButton,
+			}
+
+			local hue, saturation, value = colorPickerObj.Value:ToHSV()
+			local isDraggingColor = false
+			local isDraggingHue = false
+
+			local isHexFocused = false
+			local isRgbFocused = false
+
+			local function updateColorFromHSV()
+				colorPickerObj.Value = Color3.fromHSV(hue, saturation, value)
+
+				twen.fortnite(pickerButton, {BackgroundColor3 = colorPickerObj.Value}, "Linear", {Duration = 0.15})
+				--gamw to spi
+				if not isHexFocused then
+					hexTextbox.Text = string.format("#%02X%02X%02X", colorPickerObj.Value.R * 255, colorPickerObj.Value.G * 255, colorPickerObj.Value.B * 255)
+					hexTextbox.TextColor3 = colorPickerObj.Value
+				end
+				if not isRgbFocused then
+					rgbTextbox.Text = string.format("%d,%d,%d", colorPickerObj.Value.R * 255, colorPickerObj.Value.G * 255, colorPickerObj.Value.B * 255)
+					rgbTextbox.TextColor3 = colorPickerObj.Value
+				end
+
+				if colorPickerObj.Callback then
+					colorPickerObj.Callback(colorPickerObj.Value)
+				end
+			end
+
+			local function updateColorPicker(skipHueTween)
+				local hueGradient = Color:FindFirstChild("HueSaturationGradient")
+				if hueGradient then
+					if skipHueTween then
+
+						hueGradient.Color = ColorSequence.new({
+							ColorSequenceKeypoint.new(0, Color3.fromRGB(255, 255, 255)),
+							ColorSequenceKeypoint.new(1, Color3.fromHSV(hue, 1, 1))
+						})
+					else
+						local currentHueColor = hueGradient.Color.Keypoints[2].Value
+						local currentHue = currentHueColor:ToHSV()
+						local targetHue = hue
+
+						if currentHueTween then
+							currentHueTween:Cancel()
+						end
+
+						local startTime = tick()
+						local duration = 0.2
+
+						local function updateHueGradient()
+							local elapsed = tick() - startTime
+							local progress = math.min(elapsed / duration, 1) --to tween gia to color
+
+							progress = progress * progress * (3 - 2 * progress) 
+
+							local interpolatedHue = currentHue + (targetHue - currentHue) * progress
+							--to gradient color gia to megalo pragmataki blah blah blah hahah ah gamw to spiti sou vlaka
+							hueGradient.Color = ColorSequence.new({
+								ColorSequenceKeypoint.new(0, Color3.fromRGB(255, 255, 255)),
+								ColorSequenceKeypoint.new(1, Color3.fromHSV(interpolatedHue, 1, 1))
+							})
+
+							if progress < 1 then
+								game:GetService("RunService").Heartbeat:Wait()
+								updateHueGradient()
+							else
+								currentHueTween = nil
+							end
+						end
+
+						currentHueTween = {
+							Cancel = function()
+							end
+						}
+						--kanei to color gradient update xwris leaks
+						spawn(updateHueGradient)
+					end
+				end
+				local pointer = Color:FindFirstChild("Pointer")
+				if pointer then
+					twen.fortnite(pointer, {Position = UDim2.fromScale(saturation, 1 - value)}, "Linear", {Duration = 0.05})
+				end
+				local huePointer = ColorBar:FindFirstChild("Pointer")
+				if huePointer then
+					twen.fortnite(huePointer, {Position = UDim2.fromScale(hue, 0.5)}, "Linear", {Duration = 0.05})
+				end
+				updateColorFromHSV()
+			end
+
+			local function startDraggingColor(input)
+				if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+					isDraggingColor = true
+					local colorFrame = Color
+					local mousePos = Vector2.new(input.Position.X, input.Position.Y)
+					local framePos = colorFrame.AbsolutePosition
+					local frameSize = colorFrame.AbsoluteSize
+					saturation = math.clamp((mousePos.X - framePos.X) / frameSize.X, 0, 1)
+					value = math.clamp(1 - (mousePos.Y - framePos.Y) / frameSize.Y, 0, 1)
+					updateColorPicker(true) -- Skip hue tweening while dragging
+				end
+			end
+
+			local function startDraggingHue(input)
+				if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+					isDraggingHue = true
+					local hueFrame = ColorBar
+					local mousePos = input.Position.X
+					local framePos = hueFrame.AbsolutePosition.X
+					local frameSize = hueFrame.AbsoluteSize.X
+					hue = math.clamp((mousePos - framePos) / frameSize, 0, 1)
+					updateColorPicker(false) -- Use hue tweening on initial click
+				end
+			end
+
+
+			Color.InputBegan:Connect(startDraggingColor)
+			ColorBar.InputBegan:Connect(startDraggingHue)
+
+			local inputChangedConnection = UserInputService.InputChanged:Connect(function(input)
+				if isDraggingColor and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
+					local colorFrame = Color
+					local mousePos = Vector2.new(input.Position.X, input.Position.Y)
+					local framePos = colorFrame.AbsolutePosition
+					local frameSize = colorFrame.AbsoluteSize
+					saturation = math.clamp((mousePos.X - framePos.X) / frameSize.X, 0, 1)
+					value = math.clamp(1 - (mousePos.Y - framePos.Y) / frameSize.Y, 0, 1)
+					updateColorPicker(true) -- Skip hue tweening while dragging
+				elseif isDraggingHue and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
+					local hueFrame = ColorBar
+					local mousePos = input.Position.X
+					local framePos = hueFrame.AbsolutePosition.X
+					local frameSize = hueFrame.AbsoluteSize.X
+					hue = math.clamp((mousePos - framePos) / frameSize, 0, 1)
+					updateColorPicker(true) -- Skip hue tweening while dragging
+				end
+			end)
+
+			local inputEndedConnection = UserInputService.InputEnded:Connect(function(input)
+				if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+					isDraggingColor = false
+					isDraggingHue = false
+				end
+			end)
+
+			local function toggleColorPicker()
+				local fullHeight = 278
+				local isOpen = not ColorPopup.Visible
+
+				if isOpen then
+					if currentOpenDropdown and currentOpenDropdown.Popup then
+						local prevPopup = currentOpenDropdown.Popup
+						twen.fortnite(prevPopup, {Size = UDim2.fromOffset(170, 0)}, "Linear", {
+							Duration = 0.1,
+							Callback = function()
+								prevPopup.Visible = false
+							end
+						})
+						currentOpenDropdown = nil
+					end
+					if currentOpenColorPicker and currentOpenColorPicker ~= colorPickerObj then
+						local prevPopup = currentOpenColorPicker.Popup
+						twen.fortnite(prevPopup, {Size = UDim2.fromOffset(170, 0)}, "Linear", {
+							Duration = 0.1,
+							Callback = function()
+								prevPopup.Visible = false
+							end
+						})
+					end
+
+					-- Store original value when opening
+					colorPickerObj.OriginalValue = colorPickerObj.Value
+					currentOpenColorPicker = colorPickerObj
+
+					local buttonAbsPos = pickerButton.AbsolutePosition
+					local buttonAbsSize = pickerButton.AbsoluteSize
+					local parentAbsPos = googoogaga.AbsolutePosition
+					local parentAbsSize = googoogaga.AbsoluteSize
+					local relativeX = (buttonAbsPos.X - parentAbsPos.X) / parentAbsSize.X
+					local relativeY = (buttonAbsPos.Y - parentAbsPos.Y + buttonAbsSize.Y) / parentAbsSize.Y + 0.005
+					ColorPopup.Size = UDim2.fromOffset(170, 0)
+					ColorPopup.Visible = true
+					twen.fortnite(ColorPopup, {Size = UDim2.fromOffset(170, fullHeight)}, "Linear", {Duration = 0.1})
+				else
+					if currentOpenColorPicker == colorPickerObj then
+						-- Clear original value when properly closing (not when canceling)
+						colorPickerObj.OriginalValue = nil
+						twen.fortnite(ColorPopup, {Size = UDim2.fromOffset(170, 0)}, "Linear", {
+							Duration = 0.1,
+							Callback = function()
+								ColorPopup.Visible = false
+								currentOpenColorPicker = nil
+							end
+						})
+					end
+				end
+			end
+
+			pickerButton.MouseButton1Click:Connect(toggleColorPicker)
+
+			local inputConnection
+			inputConnection = UserInputService.InputBegan:Connect(function(input, gameProcessed)
+				if gameProcessed then return end
+				if input.UserInputType == Enum.UserInputType.MouseButton1 and ColorPopup.Visible then
+					local mousePos = Vector2.new(input.Position.X, input.Position.Y)
+					local framePos = ColorPopup.AbsolutePosition
+					local frameSize = ColorPopup.AbsoluteSize
+					if mousePos.X < framePos.X or mousePos.X > framePos.X + frameSize.X or
+						mousePos.Y < framePos.Y or mousePos.Y > framePos.Y + frameSize.Y then
+						-- Don't close if clicking on a textbox
+						if not (isHexFocused or isRgbFocused) then
+							twen.fortnite(ColorPopup, {Size = UDim2.fromOffset(170, 0)}, "Linear", {
+								Duration = 0.1,
+								Callback = function()
+									ColorPopup.Visible = false
+									currentOpenDropdown = nil
+								end
+							})
+						end
+					end
+				end
+			end)
+
+			local function copyToClipboard(text)
+				if setclipboard then
+					setclipboard(text)
+				end
+			end
+
+			copyRGB.MouseButton1Click:Connect(function()
+				copyToClipboard(rgbTextbox.Text)
+			end)
+
+			copyHex.MouseButton1Click:Connect(function()
+				copyToClipboard(hexTextbox.Text)
+			end)
+
+			hexTextbox.Focused:Connect(function()
+				isHexFocused = true
+				twen.fortnite(HexFrame.UIStroke, {Color = Color3.fromRGB(0, 137, 255)}, "Linear", {Duration = 0.1})
+			end)
+
+			hexTextbox.FocusLost:Connect(function(enterPressed)
+				isHexFocused = false
+				if enterPressed then
+					local hex = hexTextbox.Text:gsub("#", "")
+					if #hex == 6 then
+						local r, g, b = hex:match("(%w%w)(%w%w)(%w%w)")
+						if r and g and b then
+							r = tonumber(r, 16) / 255
+							g = tonumber(g, 16) / 255
+							b = tonumber(b, 16) / 255
+							colorPickerObj.Value = Color3.new(r, g, b)
+							hue, saturation, value = colorPickerObj.Value:ToHSV()
+							updateColorPicker()
+						else
+							hexTextbox.Text = string.format("#%02X%02X%02X", colorPickerObj.Value.R * 255, colorPickerObj.Value.G * 255, colorPickerObj.Value.B * 255)
+						end
+					else
+						hexTextbox.Text = string.format("#%02X%02X%02X", colorPickerObj.Value.R * 255, colorPickerObj.Value.G * 255, colorPickerObj.Value.B * 255)
+					end
+				end
+				twen.fortnite(HexFrame.UIStroke, {Color = Color3.fromRGB(25, 25, 25)}, "Linear", {Duration = 0.1})
+			end)
+
+			rgbTextbox.Focused:Connect(function()
+				isRgbFocused = true
+				twen.fortnite(RGBTextbox.UIStroke, {Color = Color3.fromRGB(0, 137, 255)}, "Linear", {Duration = 0.1})
+			end)
+
+			rgbTextbox.FocusLost:Connect(function(enterPressed)
+				isRgbFocused = false
+				if enterPressed then
+					local r, g, b = rgbTextbox.Text:match("(%d+),(%d+),(%d+)")
+					if r and g and b then
+						r = math.clamp(tonumber(r) / 255, 0, 1)
+						g = math.clamp(tonumber(g) / 255, 0, 1)
+						b = math.clamp(tonumber(b) / 255, 0, 1)
+						colorPickerObj.Value = Color3.new(r, g, b)
+						hue, saturation, value = colorPickerObj.Value:ToHSV()
+						updateColorPicker()
+					else
+						rgbTextbox.Text = string.format("%d,%d,%d", colorPickerObj.Value.R * 255, colorPickerObj.Value.G * 255, colorPickerObj.Value.B * 255)
+					end
+				end
+				twen.fortnite(RGBTextbox.UIStroke, {Color = Color3.fromRGB(25, 25, 25)}, "Linear", {Duration = 0.1})
+			end)
+
+			ColorPickerHolder.AncestryChanged:Connect(function()
+				if not ColorPickerHolder:IsDescendantOf(game) then
+					if inputChangedConnection then
+						inputChangedConnection:Disconnect()
+					end
+					if inputEndedConnection then
+						inputEndedConnection:Disconnect()
+					end
+					if inputConnection then
+						inputConnection:Disconnect()
+					end
+					if ColorPopup then
+						ColorPopup:Destroy()
+					end
+				end
+			end)
+
+			function colorPickerObj:SetValue(newColor)
+				colorPickerObj.Value = newColor or Color3.fromRGB(255, 131, 131)
+				hue, saturation, value = colorPickerObj.Value:ToHSV()
+				updateColorPicker()
+				if colorPickerObj.Callback then
+					colorPickerObj.Callback(colorPickerObj.Value)
+				end
+			end
+
+			updateColorPicker(true) -- Skip tweening for initial setup
+
+			return ColorPickerHolder
+		end
+
+
+
+		groupObj.Holder = Holder
+		groupObj.Group = group
+		return groupObj
+	end
+
+	local notificationCounter = 0 -- Add this variable outside the function
+
+	local function notify(text, duration, ...)
+		-- Concatenate all additional arguments
+		local fullText = tostring(text)
+		local args = {...}
+		for i, arg in ipairs(args) do
+			fullText = fullText .. tostring(arg)
+		end
+
+		local notifFrame = googoogaga.Parent:FindFirstChild("Notifications")
+		if not notifFrame then
+			notifFrame = inst("Frame", {
+				Name = "Notifications",
+				Size = UDim2.fromScale(0.25, 1),
+				Position = UDim2.fromScale(0.997, 0.006), -- Keep original top-right position
+				AnchorPoint = Vector2.new(1, 0),
+				BackgroundTransparency = 1,
+				BorderSizePixel = 0,
+				Visible = true,
+			}, googoogaga.Parent)
+
+			-- Function to update notification positions
+			local function updateNotificationPositions()
+				local notifications = {}
+				for _, child in ipairs(notifFrame:GetChildren()) do
+					if child:IsA("Frame") and child.Name == "Notification" and child.Visible then
+						table.insert(notifications, child)
+					end
+				end
+
+				-- Sort by LayoutOrder (oldest first, newest last)
+				table.sort(notifications, function(a, b)
+					return a.LayoutOrder < b.LayoutOrder
+				end)
+
+				-- Position each notification (stack downward from top)
+				local notificationHeight = 40
+				local notificationGap = 5
+
+				for i, notif in ipairs(notifications) do
+					local yOffset = (i - 1) * (notificationHeight + notificationGap)
+					local targetPos = UDim2.new(1, 0, 0, yOffset)
+
+					-- Only tween if not in initial animation
+					if not notif:GetAttribute("InInitialTween") then
+						-- Cancel existing tween if it exists
+						if activeTweens[notif] then
+							activeTweens[notif]:Cancel()
+							activeTweens[notif] = nil
+						end
+						local tween = twen.fortnite(notif, {Position = targetPos}, "Quad", {
+							Duration = 0.3,
+							EasingDirection = Enum.EasingDirection.Out
+						})
+						activeTweens[notif] = tween
+					end
+				end
+			end
+
+			-- Update positions when a notification is added
+			notifFrame.ChildAdded:Connect(function(child)
+				if child:IsA("Frame") and child.Name == "Notification" then
+					-- Wait for the initial animation to complete
+					child:GetAttributeChangedSignal("InInitialTween"):Connect(function()
+						if not child:GetAttribute("InInitialTween") then
+							task.wait(0.1)
+							updateNotificationPositions()
+						end
+					end)
+				end
+			end)
+
+			notifFrame.ChildRemoved:Connect(function(child)
+				if child:IsA("Frame") and child.Name == "Notification" then
+					-- Clean up tween on removal
+					if activeTweens[child] then
+						activeTweens[child]:Cancel()
+						activeTweens[child] = nil
+					end
+					task.wait(0.1)
+					updateNotificationPositions()
+				end
+			end)
+		end
+
+		-- Increment counter for unique LayoutOrder
+		notificationCounter = notificationCounter + 1
+
+		-- Calculate notification width based on text size
+		local textSize = TextService:GetTextSize(
+			fullText,
+			14,
+			Enum.Font.SourceSansBold,
+			Vector2.new(1000, 40)
+		)
+		local extraPadding = 56 -- Padding for icon and margins
+		local notifWidth = textSize.X + extraPadding -- Remove the math.max to allow small widths
+
+		-- Count existing notifications to determine initial position
+		local existingNotifications = 0
+		for _, child in ipairs(notifFrame:GetChildren()) do
+			if child:IsA("Frame") and child.Name == "Notification" and child.Visible then
+				existingNotifications = existingNotifications + 1
+			end
+		end
+
+		local notificationHeight = 40
+		local notificationGap = 5
+		local initialYOffset = existingNotifications * (notificationHeight + notificationGap)
+
+		local notification = inst("Frame", {
+			Name = "Notification",
+			Size = UDim2.fromOffset(notifWidth, 0), -- Start with zero height
+			Position = UDim2.new(1, 0, 0, initialYOffset), -- Stack downward from top
+			AnchorPoint = Vector2.new(1, 0),
+			BackgroundTransparency = 0,
+			BackgroundColor3 = Color3.fromRGB(31, 31, 31),
+			BorderSizePixel = 0,
+			Visible = true,
+			ClipsDescendants = true,
+			LayoutOrder = notificationCounter, -- Use incrementing counter instead of tick()
+			Children = {
+				inst("UICorner", { CornerRadius = UDim.new(0.1, 0) }),
+				inst("TextLabel", {
+					Name = "Title",
+					BorderSizePixel = 0,
+					Size = UDim2.fromScale(1, 0.6),
+					AnchorPoint = Vector2.new(0, 0.5),
+					Position = UDim2.new(0, 36, 0.5, 0),
+					BackgroundTransparency = 1,
+					BackgroundColor3 = Color3.fromRGB(44, 44, 44),
+					Text = fullText,
+					TextScaled = false,
+					TextWrapped = true,
+					TextSize = 14,
+					TextColor3 = Color3.fromRGB(255, 255, 255),
+					Font = Enum.Font.SourceSansBold,
+					TextXAlignment = Enum.TextXAlignment.Left,
+					TextYAlignment = Enum.TextYAlignment.Center,
+				}),
+				inst("Frame", {
+					Name = "DurationBar",
+					Size = UDim2.fromScale(1, 0.07),
+					Position = UDim2.fromScale(1, 1),
+					AnchorPoint = Vector2.new(1, 1),
+					BackgroundTransparency = 0,
+					BackgroundColor3 = Color3.fromRGB(0, 137, 255),
+					BorderSizePixel = 0,
+					Visible = true,
+				}),
+				inst("ImageLabel", {
+					Name = "Icon",
+					Size = UDim2.fromOffset(16, 16),
+					Position = UDim2.new(0, 20, 0.5, 0),
+					AnchorPoint = Vector2.new(0.5, 0.5),
+					BackgroundTransparency = 1,
+					ImageTransparency = 0,
+					Image = "rbxassetid://7030936122",
+					ImageColor3 = Color3.fromRGB(0, 137, 255),
+					ScaleType = Enum.ScaleType.Stretch,
+				})
+			}
+		}, notifFrame)
+
+		-- Mark as in initial tween
+		notification:SetAttribute("InInitialTween", true)
+
+		-- Animate notification appearance (size tween)
+		local initialTween = twen.fortnite(notification, {Size = UDim2.fromOffset(notifWidth, 40)}, "Back", {
+			Duration = 0.3,
+			EasingDirection = Enum.EasingDirection.Out,
+			Callback = function()
+				notification:SetAttribute("InInitialTween", false)
+			end
+		})
+
+		-- Animate duration bar (duration only affects how long the notification stays, not positioning)
+		local durationBar = notification:FindFirstChild("DurationBar")
+		if durationBar then
+			twen.fortnite(durationBar, {Size = UDim2.fromScale(0, 0.07)}, "Linear", {
+				Duration = duration or 5, -- Only affects how long it takes to disappear
+				Callback = function()
+					-- Shrink size before destroying
+					twen.fortnite(notification, {Size = UDim2.fromOffset(notifWidth, 0)}, "Back", {
+						Duration = 0.2,
+						EasingDirection = Enum.EasingDirection.In,
+						Callback = function()
+							if activeTweens[notification] then
+								activeTweens[notification]:Cancel()
+								activeTweens[notification] = nil
+							end
+							notification:Destroy()
+						end
+					})
+				end
+			})
+		end
+	end
+
+	local scroll = inst("ScrollingFrame", {
+		Name = "Scroll",
+		BorderSizePixel = 0,
+		Size = UDim2.fromScale(0.98, 1),
+		Position = UDim2.fromScale(0.5, 0.5),
+		AnchorPoint = Vector2.new(0.5, 0.5),
+		BackgroundTransparency = 1,
+		CanvasSize = UDim2.new(0, 0, 0, 0),
+		ScrollingDirection = Enum.ScrollingDirection.X,
+		AutomaticCanvasSize = Enum.AutomaticSize.X,
+		ScrollBarThickness = 0,
+		ScrollBarImageTransparency = 1,
+		Children = {
+			inst("UIListLayout", {
+				Padding = UDim.new(0.005, 0),
+				FillDirection = Enum.FillDirection.Horizontal,
+				VerticalAlignment = Enum.VerticalAlignment.Top,
+				SortOrder = Enum.SortOrder.LayoutOrder,
+			})
+		}
+	}, bar)
+
+	local topbar = inst("Frame", {
+		Name = "Topbar",
+		BorderSizePixel = 0,
+		Size = UDim2.fromScale(1, 0.078),
+		Position = UDim2.fromScale(0.5, 0),
+		AnchorPoint = Vector2.new(0.5, -1),
+		BackgroundColor3 = Color3.fromRGB(31, 31, 31),
+		BackgroundTransparency = 1,
+		Children = {
+			inst("TextLabel", {
+				Name = "Title",
+				BorderSizePixel = 0,
+				Size = UDim2.fromScale(0.8, 0.5),
+				Position = UDim2.fromScale(0.021, 0.5),
+				AnchorPoint = Vector2.new(0, 0.5),
+				BackgroundTransparency = 1,
+				TextScaled = true,
+				TextColor3 = Color3.fromRGB(255, 255, 255),
+				Font = Enum.Font.SourceSansSemibold,
+				TextXAlignment = Enum.TextXAlignment.Left
+			})
+
+
+		}
+	}, main)
+
+	do
+		local UserInputService = game:GetService("UserInputService")
+
+		local dragging = false
+		local dragInput, dragStart, startPos
+
+		local function update(input)
+			local delta = input.Position - dragStart
+			local targetPos = UDim2.new(
+				startPos.X.Scale,
+				startPos.X.Offset + delta.X,
+				startPos.Y.Scale,
+				startPos.Y.Offset + delta.Y
+			)
+
+			googoogaga.Position = targetPos
+		end
+
+		topbar.InputBegan:Connect(function(input)
+			if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+				dragging = true
+				dragStart = input.Position
+				startPos = googoogaga.Position
+
+				-- Stop dragging when mouse is released
+				input.Changed:Connect(function()
+					if input.UserInputState == Enum.UserInputState.End then
+						dragging = false
+					end
+				end)
+			end
+		end)
+
+		topbar.InputChanged:Connect(function(input)
+			if input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch then
+				dragInput = input
+			end
+		end)
+
+		UserInputService.InputChanged:Connect(function(input)
+			if input == dragInput and dragging then
+				update(input) -- call tween update
+			end
+		end)
+	end
+
+	applyRichTextTo(topbar.Title, "Fortnite Rapper 2 - Halloween 🎃", {
+		{ Type = "color", Value = Color3.fromRGB(255, 151, 66), Range = {21, 29} },
+	})
+
+	local closebtn = inst("TextButton", {
+		Name = "CloseBtn",
+		Size = UDim2.fromScale(0.045, 0.7),
+		AnchorPoint = Vector2.new(0.5, 0.5),
+		Position = UDim2.fromScale(0.97, 0.5),
+		BackgroundColor3 = Color3.fromRGB(31, 31, 31),
+		Text = "",
+		TextColor3 = Color3.fromRGB(255, 255, 255),
+		Font = Enum.Font.SourceSans,
+		TextScaled = true,
+		AutoButtonColor = false,
+		BackgroundTransparency = 0.85,
+		Children = {
+			inst("UICorner", { CornerRadius = UDim.new(0.2, 0) }),
+			inst("ImageLabel", {
+				Name = "image",
+				Size = UDim2.fromScale(0.7, 0.7),
+				Position = UDim2.fromScale(0.5, 0.5),
+				AnchorPoint = Vector2.new(0.5, 0.5),
+				BackgroundTransparency = 1,
+				ImageTransparency = 0,
+				Image = "rbxassetid://14203224837",
+				ImageColor3 = Color3.fromRGB(255, 255, 255),
+				ScaleType = Enum.ScaleType.Stretch,
+			})
+		}
+	}, topbar)
+
+	local Minimize = inst("TextButton", {
+		Name = "MinimizeBtn",
+		Size = UDim2.fromScale(0.045, 0.7),
+		AnchorPoint = Vector2.new(0.5, 0.5),
+		Position = UDim2.fromScale(0.92, 0.5),
+		BackgroundColor3 = Color3.fromRGB(31, 31, 31),
+		Text = "",
+		Modal = true,
+		TextColor3 = Color3.fromRGB(255, 255, 255),
+		Font = Enum.Font.SourceSans,
+		TextScaled = true,
+		AutoButtonColor = false,
+		BackgroundTransparency = 0.85,
+		Children = {
+			inst("UICorner", { CornerRadius = UDim.new(0.2, 0) }),
+			inst("ImageLabel", {
+				Name = "image",
+				Size = UDim2.fromScale(0.7, 0.7),
+				Position = UDim2.fromScale(0.5, 0.5),
+				AnchorPoint = Vector2.new(0.5, 0.5),
+				BackgroundTransparency = 1,
+				ImageTransparency = 0,
+				Image = "rbxassetid://11622919444",
+				ImageColor3 = Color3.fromRGB(255, 255, 255),
+				ScaleType = Enum.ScaleType.Stretch,
+			})
+		}
+	}, topbar)
+
+	closebtn.MouseButton1Click:Connect(function()
+		if googoogaga and googoogaga.Parent then
+			googoogaga.Parent:Destroy()
+		end
+	end)
+
+	Minimize.MouseButton1Click:Connect(function()
+		if googoogaga then
+			googoogaga.Visible = false
+		end
+	end)
+
+	UserInputService.InputBegan:Connect(function(input, gameProcessed)
+		if gameProcessed then return end
+		if input.UserInputType == Enum.UserInputType.Keyboard and input.KeyCode == ToggleKeybind then
+			if googoogaga then
+				googoogaga.Visible = not googoogaga.Visible
+			end
+		end
+	end)
+
+	applyButtonAnimations(closebtn,
+		Color3.fromRGB(31, 31, 31),
+		Color3.fromRGB(255, 43, 43),
+		Color3.fromRGB(255, 201, 201)
+	)
+
+	applyButtonAnimations(Minimize,
+		Color3.fromRGB(31, 31, 31),
+		Color3.fromRGB(0, 0, 0),
+		Color3.fromRGB(79, 79, 79)
+	)
+
+
+	return {
+		CreateTab = createTab,
+		CreateGroup = createGroup,
+		Children = Children,
+		ApplyAnimations = applyButtonAnimations,
+		Main = googoogaga,
+		Notify = notify,
+		AddTooltip = addTooltipToElement
+	}
+
+end
+
+return Library
