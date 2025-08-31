@@ -14,6 +14,7 @@ local NOTIFICATION_GAP = 0.007
 local activeTweens = {}
 local twen = {}
 
+
 local function lerpColorSequence(from, to, alpha)
 	local newKeypoints = {}
 	for i = 1, #from.Keypoints do
@@ -910,6 +911,69 @@ function Library:CreateWindow(settings)
 		}
 	},googoogaga)
 
+		local searchBar = inst("CanvasGroup", {
+		Name = "SearchBar",
+		Size = UDim2.fromOffset(30,30),
+		Position = UDim2.fromScale(0.04, 0.92),
+		AnchorPoint = Vector2.new(0, 0.5),
+		BackgroundColor3 = Color3.fromRGB(42, 42, 42),
+		BorderSizePixel = 0,
+		GroupTransparency = 0.9,
+		ZIndex = 2,
+		Visible = true,
+		Children= {
+			inst("UICorner", { CornerRadius = UDim.new(0.3, 0) }),
+			inst("UIStroke", {
+				Color = Color3.fromRGB(255,255,255),
+				ApplyStrokeMode = Enum.ApplyStrokeMode.Border,
+				Transparency = 0.9,
+				Thickness = 1,
+			})
+		}
+	},googoogaga)
+
+	local SearchImage = inst("ImageLabel", {
+		Name = "ImageLabel",
+		Size = UDim2.fromOffset(16, 16),
+		Position = UDim2.fromOffset(7, 15),
+		AnchorPoint = Vector2.new(0, 0.5),
+		BackgroundColor3 = Color3.fromRGB(42, 42, 42),
+		BorderSizePixel = 0,
+		BackgroundTransparency = 1,
+		ZIndex = 2,
+		Visible = true,
+		Image = "rbxassetid://124750970630984",
+		Children= {
+			inst("UICorner", { CornerRadius = UDim.new(0.3, 0) }),
+
+		}
+	},searchBar)
+
+	local searchTextBox = inst("TextBox", {
+		Name = "HexTextbox",
+		BorderSizePixel = 0,
+		Size = UDim2.fromScale(1, 1),
+		AnchorPoint = Vector2.new(0.5, 0.5),
+		Position = UDim2.fromScale(0.5, 0.5),
+		BackgroundTransparency = 1,
+		TextColor3 = Color3.fromRGB(255, 255, 255),
+		Font = Enum.Font.SourceSansSemibold,
+		TextXAlignment = Enum.TextXAlignment.Left,
+		TextScaled = true,
+		Text = "",
+		TextSize = 16,
+		BackgroundColor3 = Color3.fromRGB(255, 255, 255),
+		ClearTextOnFocus = true,
+		Children = {
+			inst("UIPadding", {
+				PaddingTop = UDim.new(0, 8),
+				PaddingBottom = UDim.new(0, 8),
+				PaddingLeft = UDim.new(0, 12),
+				PaddingRight = UDim.new(0, 10),
+			})	
+		}
+	}, searchBar)
+
 	local pfp = inst("Frame", {
 		Name = "ImageFrame",
 		Size = UDim2.fromScale(0.34, 0.34),
@@ -949,6 +1013,35 @@ function Library:CreateWindow(settings)
 		}
 	},pfp)
 
+	searchTextBox.Focused:Connect(function()
+		twen.fortnite(searchBar, {Size = UDim2.fromOffset(200,30)}, "Quad", {Duration = 0.3})
+		twen.fortnite(searchTextBox, {TextTransparency = 0}, "Quad", {Duration = 0.1})
+		twen.fortnite(SearchImage, {ImageTransparency = 1}, "Quad", {Duration = 0.2})
+		twen.fortnite(SearchImage, {Size = UDim2.fromOffset(0,16)}, "Quad", {Duration = 0.2})
+		twen.fortnite(searchBar, {GroupTransparency = 0}, "Quad", {Duration = 0.2})
+
+	end)
+
+	searchTextBox.MouseEnter:Connect(function()
+		twen.fortnite(SearchImage, {Rotation = 46}, "Quad", {Duration = 0.3})
+		twen.fortnite(searchBar, {GroupTransparency = 0}, "Quad", {Duration = 0.2})
+
+	end)
+
+	searchTextBox.MouseLeave:Connect(function()
+		twen.fortnite(SearchImage, {Rotation = 0}, "Quad", {Duration = 0.3})
+		twen.fortnite(searchBar, {GroupTransparency = 0.9}, "Quad", {Duration = 0.2})
+
+	end)
+
+	searchTextBox.FocusLost:Connect(function()
+		twen.fortnite(searchBar, {Size = UDim2.fromOffset(30,30)}, "Quad", {Duration = 0.3})
+		twen.fortnite(searchTextBox, {TextTransparency = 1}, "Quad", {Duration = 0.1})
+		twen.fortnite(SearchImage, {ImageTransparency = 0}, "Quad", {Duration = 0.2})
+		twen.fortnite(SearchImage, {Size = UDim2.fromOffset(16,16)}, "Quad", {Duration = 0.2})
+		twen.fortnite(searchBar, {GroupTransparency = 0.9}, "Quad", {Duration = 0.2})
+	end)
+
 	local main = inst("Frame", {
 		Name = "Main",
 		Size = UDim2.fromScale(1, 1),
@@ -961,7 +1054,7 @@ function Library:CreateWindow(settings)
 			inst("UIGradient", {
 				Color = ColorSequence.new({
 					ColorSequenceKeypoint.new(0, Color3.fromRGB(31, 31, 31)),
-					ColorSequenceKeypoint.new(1, Color3.fromRGB(34, 34, 34))
+					ColorSequenceKeypoint.new(1, Color3.fromRGB(27,27,27))
 				}),
 				Rotation = 50
 			})
@@ -1008,6 +1101,144 @@ function Library:CreateWindow(settings)
 	local tabs = {}
 	local activeTab = nil
 	local tabOrder = 0
+	local normalHeights = {}
+
+	local function trim(s)
+		return (s:gsub("^%s+", ""):gsub("%s+$", ""))
+	end
+
+	-- Element holder names we treat as filterable "items"
+	local ELEMENT_HOLDER_NAMES = {
+		ToggleButtonHolder = true,
+		SimpleButtonHolder = true,
+		SliderHolder = true,
+		KeypickerHolder = true,
+		DropdownHolder = true,
+		ColorPickerHolder = true,
+	}
+
+	local function getElementTitleText(holder)
+		-- Prefer a direct Title
+		local titleLabel = holder:FindFirstChild("Title")
+		-- SimpleButton has Title under BTN
+		if not titleLabel then
+			local btn = holder:FindFirstChild("BTN")
+			if btn then
+				titleLabel = btn:FindFirstChild("Title")
+			end
+		end
+		-- Fallback: find any descendant named Title within this holder
+		if not titleLabel then
+			titleLabel = holder:FindFirstChild("Title", true)
+		end
+		return titleLabel and titleLabel.Text or ""
+	end
+
+	local function closePopupsForSearch()
+		-- Close dropdown
+		if currentOpenDropdown and currentOpenDropdown.Menu then
+			local prevMenu = currentOpenDropdown.Menu
+			local prevArrow = currentOpenDropdown.Button and currentOpenDropdown.Button:FindFirstChild("Arrow")
+			twen.fortnite(prevMenu, { Size = UDim2.fromOffset(prevMenu.Size.X.Offset, 0) }, "Linear", {
+				Duration = 0.1,
+				Callback = function()
+					prevMenu.Visible = false
+				end
+			})
+			if prevArrow then
+				twen.fortnite(prevArrow, { Rotation = 0 }, "Linear", { Duration = 0.1 })
+			end
+			currentOpenDropdown = nil
+		end
+		-- Close color picker
+		if currentOpenColorPicker and currentOpenColorPicker.Popup then
+			local prevPopup = currentOpenColorPicker.Popup
+			twen.fortnite(prevPopup, { Size = UDim2.fromOffset(170, 0) }, "Linear", {
+				Duration = 0.1,
+				Callback = function()
+					prevPopup.Visible = false
+				end
+			})
+			currentOpenColorPicker = nil
+		end
+	end
+	
+	local filterTweens = {}
+	local SHOW_HEIGHT = 28
+
+	
+	local function tweenVisibility(frame, makeVisible)
+		if not frame:IsA("Frame") then return end
+		local targetHeight
+
+		-- Grab or remember original height
+		if not normalHeights[frame] then
+			normalHeights[frame] = frame.Size.Y
+		end
+
+		if makeVisible then
+			-- Start from collapsed state if currently invisible
+			if not frame.Visible then
+				frame.Visible = true
+				frame.Size = UDim2.new(frame.Size.X.Scale, frame.Size.X.Offset, 0, 0)
+			end
+			targetHeight = normalHeights[frame]
+		else
+			targetHeight = UDim.new(0, 0)
+		end
+
+		local tween = twen.fortnite(frame, {Size = UDim2.new(frame.Size.X.Scale, frame.Size.X.Offset, targetHeight.Scale, targetHeight.Offset)}, "Quad", {
+			Duration = 0.08,
+			Callback = function()
+				if not makeVisible then
+					frame.Visible = false
+				end
+			end
+		})
+	end
+	
+	local function filterActiveTabByQuery(query)
+		local q = trim(string.lower(query or ""))
+
+		-- During active searching, close popups to avoid stray overlays
+		if q ~= "" then
+			closePopupsForSearch()
+		end
+
+		if not activeTab or not activeTab.Container then return end
+		local scroller = activeTab.Container:FindFirstChild("Scroller")
+		if not scroller then return end
+
+		for _, group in ipairs(scroller:GetChildren()) do
+			if group:IsA("Frame") then
+				local holder = group:FindFirstChild("Holder")
+				if holder then
+					local anyVisible = (q == "")
+					for _, child in ipairs(holder:GetChildren()) do
+						if child:IsA("Frame") and ELEMENT_HOLDER_NAMES[child.Name] then
+							if q == "" then
+								tweenVisibility(child, true)
+								anyVisible = true
+							else
+								local label = string.lower(getElementTitleText(child))
+								local match = label:find(q, 1, true) ~= nil
+								tweenVisibility(child, match)
+								if match then anyVisible = true end
+							end
+						end
+					end
+					-- Hide the whole category if nothing inside it matches
+					group.Visible = anyVisible
+				end
+			end
+		end
+	end
+
+	-- Hook real-time filtering to the search box text
+	searchTextBox:GetPropertyChangedSignal("Text"):Connect(function()
+		filterActiveTabByQuery(searchTextBox.Text)
+	end)
+
 
 	local ToolTip = inst("TextLabel", {
 		Name = "ToolTip",
@@ -1390,7 +1621,6 @@ function Library:CreateWindow(settings)
 
 		return tabInfo
 	end
-
 
 	local function createGroup(name, parentTabText)
 		local tabInfo = tabs[parentTabText]
