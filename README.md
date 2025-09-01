@@ -5,6 +5,9 @@
 
 A sleek, customizable UI library for Roblox games, featuring animated elements and rich text support.
 
+***⚠️PLEASE NOTE THAT HIS UI LIBRARY IS STILL IN DEVELOPMENT SO BUGS MAY OCCUR.⚠️***
+
+
 ## Setup
 
 Load the library using:
