@@ -71,7 +71,7 @@ Select a value in a range.
 
 ```lua
 group:AddSlider({
-    Text = "Volume",
+    Text = "Slider",
     Callback = function(value) print("Value: ", value) end,
     Min = 0,
     Max = 100,
@@ -198,14 +198,14 @@ local tab = window:CreateTab("Main")
 local group = tab:CreateGroup("Controls")
 
 group:AddToggle({
-    Text = "God Mode",
+    Text = "Toggle Button",
     Callback = function(state) print("God Mode: ", state) end,
     Default = false,
     Keybind = true
 })
 
 group:AddSlider({
-    Text = "Speed",
+    Text = "Slider",
     Callback = function(value) print("Speed: ", value) end,
     Min = 0,
     Max = 100,
@@ -214,7 +214,7 @@ group:AddSlider({
 })
 
 group:AddColorPicker({
-    Text = "Player Color",
+    Text = "Color Picker",
     Callback = function(color) print("Color: ", color) end,
     Default = Color3.fromRGB(0, 255, 0)
 })
@@ -228,6 +228,5 @@ window:Notify("UI Loaded!", 3)
 - Dark theme with rounded corners.
 - Search bar for filtering elements.
 - Tooltips and notifications for enhanced UX.
-- Supports `setclipboard` for color copying.
 
 FortniteRaper2 offers a modern, flexible UI framework for Roblox games with rich customization options.
