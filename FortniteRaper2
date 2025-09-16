@@ -12,7 +12,7 @@ local currentOpenColorPicker = nil
 local NOTIFICATION_HEIGHT = 0.209
 local NOTIFICATION_GAP = 0.007
 local activeTweens = {}
-local twen = {}
+local twen = {} 
 
 
 local function lerpColorSequence(from, to, alpha)
@@ -1672,6 +1672,13 @@ function Library:CreateWindow(settings)
 			ApplyStrokeMode = Enum.ApplyStrokeMode.Border,
 			Thickness = 1.9
 		}, titleLabel)
+
+		inst("UIStroke", {
+			Color = Color3.fromRGB(255,255,255),
+			ApplyStrokeMode = Enum.ApplyStrokeMode.Border,
+			Thickness = 1,
+			Transparency = 0.95
+		}, group)
 
 		local Holder = inst("Frame", {
 			Name = "Holder",
