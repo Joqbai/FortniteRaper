@@ -1,0 +1,79 @@
+local HttpService = game:GetService("HttpService")
+
+local SaveManager = {}
+SaveManager.Folder = "FNR2Settings"
+SaveManager.Library = nil
+SaveManager.Elements = {} 
+
+function SaveManager:SetLibrary(lib)
+	self.Library = lib
+end
+
+function SaveManager:RegisterElement(id, elementType, default, getter, setter)
+	self.Elements[id] = {
+		Type = elementType,
+		Default = default,
+		Getter = getter,
+		Setter = setter,
+	}
+end
+
+local function getPath(name)
+	return SaveManager.Folder .. "/" .. name .. ".json"
+end
+
+local function ensureFolder()
+	if not isfolder(SaveManager.Folder) then
+		makefolder(SaveManager.Folder)
+	end
+end
+
+function SaveManager:Save(name)
+	if not name or name == "" then return false, "invalid name" end
+	ensureFolder()
+	local data = { objects = {} }
+	for id, meta in pairs(self.Elements) do
+		table.insert(data.objects, {
+			id = id,
+			type = meta.Type,
+			value = meta.Getter()
+		})
+	end
+	local encoded = HttpService:JSONEncode(data)
+	writefile(getPath(name), encoded)
+	return true
+end
+
+function SaveManager:Load(name)
+	if not name or name == "" then return false, "invalid name" end
+	local file = getPath(name)
+	if not isfile(file) then return false, "file missing" end
+	local data = HttpService:JSONDecode(readfile(file))
+	for _, obj in ipairs(data.objects) do
+		local meta = self.Elements[obj.id]
+		if meta and meta.Setter then
+			meta.Setter(obj.value)
+		end
+	end
+	return true
+end
+
+function SaveManager:Delete(name)
+	if not name or name == "" then return end
+	local file = getPath(name)
+	if isfile(file) then delfile(file) end
+end
+
+function SaveManager:List()
+	ensureFolder()
+	local files = listfiles(self.Folder)
+	local configs = {}
+	for _, f in ipairs(files) do
+		if f:sub(-5) == ".json" then
+			table.insert(configs, f:match("([^/\```+)%.json$"))
+		end
+	end
+	return configs
+end
+
+return SaveManager
