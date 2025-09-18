@@ -1,4 +1,4 @@
-<img src="https://raw.githubusercontent.com/devicons/devicon/master/icons/lua/lua-original.svg" width="40" height="40"/> <img src="https://cdn.discordapp.com/attachments/1345536244108755025/1411903388941025351/goongoongagnaan.png?ex=68b658ff&is=68b5077f&hm=05d6c960fa8e06fee770b025333559df55cf7cb897da8f349dac578bcba694e0&" width="40" height="40"/> 
+<img src="https://raw.githubusercontent.com/devicons/devicon/master/icons/lua/lua-original.svg" width="40" height="40"/> 
 
 
 # FortniteRaper2 - Roblox UI Library
