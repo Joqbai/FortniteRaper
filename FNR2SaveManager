@@ -1,79 +1,184 @@
-local HttpService = game:GetService("HttpService")
+local cloneref = (cloneref or clonereference or function(instance) return instance end)
+local HttpService = cloneref(game:GetService("HttpService"))
+local isfolder, isfile, listfiles = isfolder, isfile, listfiles
 
-local SaveManager = {}
-SaveManager.Folder = "FNR2Settings"
-SaveManager.Library = nil
-SaveManager.Elements = {} 
+if typeof(copyfunction) == "function" then
+    local safeIsFolder, safeIsFile, safeListFiles =
+        copyfunction(isfolder), copyfunction(isfile), copyfunction(listfiles)
 
-function SaveManager:SetLibrary(lib)
-	self.Library = lib
+    local ok = pcall(function() return safeIsFolder("___test_"..math.random(1,1e6)) end)
+    if not ok then
+        isfolder = function(folder)
+            local s,d = pcall(safeIsFolder, folder)
+            return s and d or false
+        end
+        isfile = function(file)
+            local s,d = pcall(safeIsFile, file)
+            return s and d or false
+        end
+        listfiles = function(folder)
+            local s,d = pcall(safeListFiles, folder)
+            return s and d or {}
+        end
+    end
 end
 
-function SaveManager:RegisterElement(id, elementType, default, getter, setter)
-	self.Elements[id] = {
-		Type = elementType,
-		Default = default,
-		Getter = getter,
-		Setter = setter,
-	}
-end
+local SaveManager = {} do
+    SaveManager.Folder   = "Frapper2Settings"
+    SaveManager.SubFolder= ""
+    SaveManager.Ignore   = {}
+    SaveManager.Library  = nil
 
-local function getPath(name)
-	return SaveManager.Folder .. "/" .. name .. ".json"
-end
+    SaveManager.Parser = {
+        Toggle = {
+            Save = function(idx,obj) return {type="Toggle",idx=idx,value=obj.Value} end,
+            Load = function(idx,data)
+                local o = SaveManager.Library.Toggles[idx]
+                if o and o.SetValue then o:SetValue(data.value) end
+            end
+        },
+        Slider = {
+            Save = function(idx,obj) return {type="Slider",idx=idx,value=obj.Value} end,
+            Load = function(idx,data)
+                local o = SaveManager.Library.Options[idx]
+                if o and o.SetValue then o:SetValue(tonumber(data.value)) end
+            end
+        },
+        Dropdown = {
+            Save = function(idx,obj) return {type="Dropdown",idx=idx,value=obj.Value,multi=obj.Multi} end,
+            Load = function(idx,data)
+                local o = SaveManager.Library.Options[idx]
+                if o and o.SetValue then o:SetValue(data.value) end
+            end
+        },
+        ColorPicker = {
+            Save = function(idx,obj) return {
+                type="ColorPicker",
+                idx=idx,
+                value={obj.Value.R, obj.Value.G, obj.Value.B},
+            } end,
+            Load = function(idx,data)
+                local o = SaveManager.Library.Options[idx]
+                if o and o.SetValue then
+                    o:SetValue(Color3.new(unpack(data.value)))
+                end
+            end
+        },
+        KeyPicker = {
+            Save = function(idx,obj) return {type="KeyPicker", idx=idx, key=obj.Value, mode=obj.Mode} end,
+            Load = function(idx,data)
+                local o = SaveManager.Library.Options[idx]
+                if o and o.SetValue then o:SetValue({data.key,data.mode}) end
+            end
+        },
+        Input = {
+            Save = function(idx,obj) return {type="Input", idx=idx, text=obj.Value} end,
+            Load = function(idx,data)
+                local o = SaveManager.Library.Options[idx]
+                if o and o.SetValue then o:SetValue(data.text) end
+            end
+        }
+    }
 
-local function ensureFolder()
-	if not isfolder(SaveManager.Folder) then
-		makefolder(SaveManager.Folder)
-	end
-end
+    function SaveManager:SetLibrary(lib) self.Library=lib end
 
-function SaveManager:Save(name)
-	if not name or name == "" then return false, "invalid name" end
-	ensureFolder()
-	local data = { objects = {} }
-	for id, meta in pairs(self.Elements) do
-		table.insert(data.objects, {
-			id = id,
-			type = meta.Type,
-			value = meta.Getter()
-		})
-	end
-	local encoded = HttpService:JSONEncode(data)
-	writefile(getPath(name), encoded)
-	return true
-end
+    function SaveManager:SetIgnore(list)
+        for _,k in pairs(list) do self.Ignore[k]=true end
+    end
 
-function SaveManager:Load(name)
-	if not name or name == "" then return false, "invalid name" end
-	local file = getPath(name)
-	if not isfile(file) then return false, "file missing" end
-	local data = HttpService:JSONDecode(readfile(file))
-	for _, obj in ipairs(data.objects) do
-		local meta = self.Elements[obj.id]
-		if meta and meta.Setter then
-			meta.Setter(obj.value)
-		end
-	end
-	return true
-end
+    local function subDir()
+        return SaveManager.Folder .. "/settings/"..(SaveManager.SubFolder~="" and SaveManager.SubFolder.."/" or "")
+    end
 
-function SaveManager:Delete(name)
-	if not name or name == "" then return end
-	local file = getPath(name)
-	if isfile(file) then delfile(file) end
-end
+    local function buildFolder()
+        if not isfolder(SaveManager.Folder) then makefolder(SaveManager.Folder) end
+        if not isfolder(SaveManager.Folder.."/settings") then makefolder(SaveManager.Folder.."/settings") end
+        if SaveManager.SubFolder~="" and not isfolder(SaveManager.Folder.."/settings/"..SaveManager.SubFolder) then
+            makefolder(SaveManager.Folder.."/settings/"..SaveManager.SubFolder)
+        end
+    end
 
-function SaveManager:List()
-	ensureFolder()
-	local files = listfiles(self.Folder)
-	local configs = {}
-	for _, f in ipairs(files) do
-		if f:sub(-5) == ".json" then
-			table.insert(configs, f:match("([^/\```+)%.json$"))
-		end
-	end
-	return configs
+    function SaveManager:Save(name)
+        buildFolder()
+        if not name then return false,"no config" end
+
+        local data={objects={}}
+        for idx,obj in pairs(self.Library.Toggles) do
+            if obj.Type and self.Parser[obj.Type] and not self.Ignore[idx] then
+                table.insert(data.objects, self.Parser[obj.Type].Save(idx,obj))
+            end
+        end
+        for idx,obj in pairs(self.Library.Options) do
+            if obj.Type and self.Parser[obj.Type] and not self.Ignore[idx] then
+                table.insert(data.objects, self.Parser[obj.Type].Save(idx,obj))
+            end
+        end
+
+        local enc = HttpService:JSONEncode(data)
+        writefile(subDir()..name..".json", enc)
+        return true
+    end
+
+    function SaveManager:Load(name)
+        buildFolder()
+        local path=subDir()..name..".json"
+        if not isfile(path) then return false,"no file" end
+        local succ,data = pcall(function() return HttpService:JSONDecode(readfile(path)) end)
+        if not succ then return false,"decode error" end
+        for _,obj in ipairs(data.objects) do
+            if self.Parser[obj.type] then
+                task.spawn(self.Parser[obj.type].Load,obj.idx,obj)
+            end
+        end
+        return true
+    end
+
+    function SaveManager:Delete(name)
+        buildFolder()
+        local f=subDir()..name..".json"
+        if isfile(f) then delfile(f) end
+        return true
+    end
+
+    function SaveManager:List()
+        buildFolder()
+        local files=listfiles(subDir())
+        local out={}
+        for _,f in ipairs(files) do
+            if f:sub(-5)==".json" then
+                table.insert(out, f:match("([^/\```+)%.json$"))
+            end
+        end
+        return out
+    end
+
+    function SaveManager:BuildConfigSection(tab)
+        local group=tab:CreateGroup("Configs")
+
+        local currentName=""
+
+        group:AddTextbox("Config Name", function(val) currentName=val end, "Enter name...")
+
+        group:AddButton("Save", function()
+            if currentName=="" then return end
+            self:Save(currentName)
+            self.Library:Notify("Saved "..currentName,2)
+        end)
+
+        group:AddButton("Load", function()
+            if currentName=="" then return end
+            self:Load(currentName)
+            self.Library:Notify("Loaded "..currentName,2)
+        end)
+
+        group:AddButton("Delete", function()
+            if currentName=="" then return end
+            self:Delete(currentName)
+            self.Library:Notify("Deleted "..currentName,2)
+        end)
+
+        group:AddDropdown("Config List", self:List(), function(val) currentName=val end)
+    end
 end
 
 return SaveManager
