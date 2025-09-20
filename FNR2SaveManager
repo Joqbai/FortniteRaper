@@ -152,32 +152,55 @@ local SaveManager = {} do
         return out
     end
 
-    function SaveManager:BuildConfigSection(tab)
-        local group=tab:CreateGroup("Configs")
-
-        local currentName=""
-
-        group:AddTextbox("Config Name", function(val) currentName=val end, "Enter name...")
-
-        group:AddButton("Save", function()
-            if currentName=="" then return end
-            self:Save(currentName)
-            self.Library:Notify("Saved "..currentName,2)
-        end)
-
-        group:AddButton("Load", function()
-            if currentName=="" then return end
-            self:Load(currentName)
-            self.Library:Notify("Loaded "..currentName,2)
-        end)
-
-        group:AddButton("Delete", function()
-            if currentName=="" then return end
-            self:Delete(currentName)
-            self.Library:Notify("Deleted "..currentName,2)
-        end)
-
-        group:AddDropdown("Config List", self:List(), function(val) currentName=val end)
+    function SaveManager:BuildConfigSection(tabName)
+        assert(self.Library, "Must set Library first")
+    
+        -- FR2 way: Window.CreateGroup("GroupTitle","TabName")
+        local group = self.Library:CreateGroup("Configs", tabName or "Settings")
+    
+        local currentName = ""
+    
+        group:AddTextbox({
+            Text = "Config Name",
+            Callback = function(val) currentName = val end,
+            Placeholder = "Enter name..."
+        })
+    
+        group:AddButton({
+            Text = "Save",
+            Callback = function()
+                if currentName ~= "" then
+                    self:Save(currentName)
+                    self.Library:Notify("Saved config: "..currentName,2)
+                end
+            end
+        })
+    
+        group:AddButton({
+            Text = "Load",
+            Callback = function()
+                if currentName ~= "" then
+                    self:Load(currentName)
+                    self.Library:Notify("Loaded config: "..currentName,2)
+                end
+            end
+        })
+    
+        group:AddButton({
+            Text = "Delete",
+            Callback = function()
+                if currentName ~= "" then
+                    self:Delete(currentName)
+                    self.Library:Notify("Deleted config: "..currentName,2)
+                end
+            end
+        })
+    
+        group:AddDropdown({
+            Text = "Config List",
+            Values = self:List(),
+            Callback = function(val) currentName = val end
+        })
     end
 end
 
