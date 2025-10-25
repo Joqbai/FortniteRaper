@@ -1,6 +1,8 @@
 local TweenService = game:GetService("TweenService")
 local TextService = game:GetService("TextService")
 local UserInputService = game:GetService("UserInputService")
+local GuiService = game:GetService("GuiService")
+local RunService = game:GetService("RunService")
 
 local CoreGui = game:GetService("CoreGui")
 local protectgui = protectgui or (syn and syn.protect_gui) or function() end
@@ -12,8 +14,7 @@ local currentOpenColorPicker = nil
 local NOTIFICATION_HEIGHT = 0.209
 local NOTIFICATION_GAP = 0.007
 local activeTweens = {}
-local twen = {} 
-
+local twen = {}
 
 local function lerpColorSequence(from, to, alpha)
 	local newKeypoints = {}
@@ -41,45 +42,49 @@ local function colorToHex(color)
 end
 
 local function ParentUI(UI)
-    pcall(protectgui, UI)
-    if not pcall(function()
-            UI.Parent = gethui()
-        end) then
-        UI.Parent = game:GetService("Players").LocalPlayer:WaitForChild("PlayerGui", math.huge)
-    end
+	pcall(protectgui, UI)
+	if not pcall(function()
+			UI.Parent = gethui()
+		end) then
+		UI.Parent = game:GetService("Players").LocalPlayer:WaitForChild("PlayerGui", math.huge)
+	end
 end
 
 local function formatRichText(text, styles)
-	local formattedText = tostring(text)
-	local replacements = {}
+	local fragments = {}
+	for i = 1, #text do
+		fragments[i] = text:sub(i, i)
+	end
+
+	local opens, closes = {}, {}
+
 	for _, style in ipairs(styles or {}) do
-		local tagType = style.Type
-		local value = style.Value
-		local range = style.Range
-		if tagType and TAGS[tagType] then
-			local startIdx, endIdx = range[1], range[2]
-			if startIdx and endIdx and startIdx <= endIdx and startIdx >= 1 and endIdx <= #formattedText + 1 then
-				local openTag = TAGS[tagType].open
-				if tagType == "font" then
-					openTag = string.format(openTag, value)
-				elseif tagType == "color" then
-					openTag = string.format(openTag, colorToHex(value))
-				elseif tagType == "size" then
-					openTag = string.format(openTag, value)
-				end
-				table.insert(replacements, {startIdx = startIdx, endIdx = endIdx, open = openTag, close = TAGS[tagType].close})
+		local startIdx, endIdx = style.Range[1], style.Range[2]
+		if startIdx and endIdx and startIdx <= endIdx then
+			local openTag, closeTag = TAGS[style.Type].open, TAGS[style.Type].close
+
+			if style.Type == "font" then
+				openTag = string.format(openTag, style.Value)
+			elseif style.Type == "color" then
+				openTag = string.format(openTag, colorToHex(style.Value))
+			elseif style.Type == "size" then
+				openTag = string.format(openTag, style.Value)
 			end
+
+			opens[startIdx] = (opens[startIdx] or "") .. openTag
+			-- note: insert *before* later close tags
+			closes[endIdx] = closeTag .. (closes[endIdx] or "")
 		end
 	end
-	table.sort(replacements, function(a, b) return a.startIdx > b.startIdx end)
-	for _, replacement in ipairs(replacements) do
-		formattedText = formattedText:sub(1, replacement.startIdx - 1)
-			.. replacement.open
-			.. formattedText:sub(replacement.startIdx, replacement.endIdx)
-			.. replacement.close
-			.. formattedText:sub(replacement.endIdx + 1)
+
+	local result = {}
+	for i = 1, #text do
+		if opens[i] then table.insert(result, opens[i]) end
+		table.insert(result, fragments[i])
+		if closes[i] then table.insert(result, closes[i]) end
 	end
-	return formattedText
+
+	return table.concat(result)
 end
 
 local function applyRichTextTo(instance, text, styles)
@@ -166,18 +171,22 @@ local function applyButtonAnimations(button, defaultColor, hoverColor, clickColo
 	local isHovered = false
 	button.MouseEnter:Connect(function()
 		isHovered = true
-		twen.fortnite(button, {BackgroundColor3 = hoverColor}, "Linear", {Duration = duration, EasingDirection = Enum.EasingDirection.InOut})
+		twen.fortnite(button, { BackgroundColor3 = hoverColor }, "Linear",
+			{ Duration = duration, EasingDirection = Enum.EasingDirection.InOut })
 	end)
 	button.MouseLeave:Connect(function()
 		isHovered = false
-		twen.fortnite(button, {BackgroundColor3 = defaultColor}, "Linear", {Duration = duration, EasingDirection = Enum.EasingDirection.InOut})
+		twen.fortnite(button, { BackgroundColor3 = defaultColor }, "Linear",
+			{ Duration = duration, EasingDirection = Enum.EasingDirection.InOut })
 	end)
 	button.MouseButton1Down:Connect(function()
-		twen.fortnite(button, {BackgroundColor3 = clickColor}, "Linear", {Duration = duration, EasingDirection = Enum.EasingDirection.InOut})
+		twen.fortnite(button, { BackgroundColor3 = clickColor }, "Linear",
+			{ Duration = duration, EasingDirection = Enum.EasingDirection.InOut })
 	end)
 	button.MouseButton1Up:Connect(function()
 		local targetColor = isHovered and hoverColor or defaultColor
-		twen.fortnite(button, {BackgroundColor3 = targetColor}, "Linear", {Duration = duration, EasingDirection = Enum.EasingDirection.InOut})
+		twen.fortnite(button, { BackgroundColor3 = targetColor }, "Linear",
+			{ Duration = duration, EasingDirection = Enum.EasingDirection.InOut })
 	end)
 end
 
@@ -186,13 +195,15 @@ Children.__index = Children
 function Children.new()
 	return setmetatable({}, Children)
 end
+
 function Children:Add(...)
-	local items = {...}
+	local items = { ... }
 	for _, item in ipairs(items) do
 		table.insert(self, item)
 	end
 	return self
 end
+
 function Children:ApplyTo(parent)
 	for _, child in ipairs(self) do
 		if typeof(child) == "Instance" then
@@ -239,21 +250,22 @@ local function createToggleButton(parent, label, callback, initialState, allowKe
 		Name = "ToggleButtonHolder",
 		BorderSizePixel = 0,
 		Size = UDim2.fromOffset(237, 28),
-		AnchorPoint = Vector2.new(0.5,0),
+		AnchorPoint = Vector2.new(0.5, 0),
 		BackgroundTransparency = 0,
+		ClipsDescendants = true,
 		BackgroundColor3 = Color3.fromRGB(31, 31, 31),
 		Children = {
 			inst("UICorner", { CornerRadius = UDim.new(0.2, 0) }),
 			inst("TextLabel", {
 				Name = "Title",
 				BorderSizePixel = 0,
-				Size = UDim2.fromScale(1,0.5),
-				AnchorPoint = Vector2.new(0.5,0.5),
-				Position = UDim2.fromScale(0.54, 0.5),
+				Size = UDim2.fromScale(0.68, 0.5),
+				AnchorPoint = Vector2.new(0, 0.5),
+				Position = UDim2.fromScale(0.038, 0.5),
 				BackgroundTransparency = 1,
 				BackgroundColor3 = Color3.fromRGB(44, 44, 44),
 				Text = label or "Toggle",
-				TextScaled = true,
+				TextScaled = false,
 				TextSize = 14,
 				TextColor3 = Color3.fromRGB(255, 255, 255),
 				Font = Enum.Font.SourceSansSemibold,
@@ -294,21 +306,28 @@ local function createToggleButton(parent, label, callback, initialState, allowKe
 		}
 	}, Btn)
 
-	applyButtonAnimations(Btn, 
+	applyButtonAnimations(Btn,
 		Color3.fromRGB(42, 42, 42),
-		Color3.fromRGB(53, 53, 53), 
-		Color3.fromRGB(24, 24, 24) 
+		Color3.fromRGB(53, 53, 53),
+		Color3.fromRGB(24, 24, 24)
 	)
 
 	local function toggle()
 		isToggled = not isToggled
 		local targetPos = isToggled and UDim2.fromScale(0.65, 0.5) or UDim2.fromScale(0.337, 0.5)
 		local targetColor = isToggled and Color3.fromRGB(155, 255, 135) or Color3.fromRGB(109, 109, 109)
-		twen.fortnite(ball, {Position = targetPos, BackgroundColor3 = targetColor}, "Linear", {Duration = 0.1, EasingDirection = Enum.EasingDirection.InOut})
+		twen.fortnite(ball, { Position = targetPos, BackgroundColor3 = targetColor }, "Linear",
+			{ Duration = 0.1, EasingDirection = Enum.EasingDirection.InOut })
 		if callback then callback(isToggled) end
 	end
 
 	Btn.MouseButton1Click:Connect(toggle)
+
+	Btn.MouseEnter:Connect(function()
+		if UserInputService:IsMouseButtonPressed(Enum.UserInputType.MouseButton1) then
+			toggle()
+		end
+	end)
 
 	local keybindButton = nil
 	local currentKey = nil
@@ -366,7 +385,7 @@ local function createToggleButton(parent, label, callback, initialState, allowKe
 			}
 		}, toggleButton)
 
-		applyButtonAnimations(keybindButton, 
+		applyButtonAnimations(keybindButton,
 			Color3.fromRGB(42, 42, 42),
 			Color3.fromRGB(53, 53, 53),
 			Color3.fromRGB(24, 24, 24)
@@ -380,7 +399,8 @@ local function createToggleButton(parent, label, callback, initialState, allowKe
 			local displayText = getDisplayName(keyCode)
 			keybindButton.Text = displayText
 			local targetSize = getButtonWidth(displayText)
-			twen.fortnite(keybindButton, {Size = targetSize}, "Linear", {Duration = 0.1, EasingDirection = Enum.EasingDirection.InOut})
+			twen.fortnite(keybindButton, { Size = targetSize }, "Linear",
+				{ Duration = 0.1, EasingDirection = Enum.EasingDirection.InOut })
 
 			if keyInputConnection then
 				keyInputConnection:Disconnect()
@@ -402,8 +422,9 @@ local function createToggleButton(parent, label, callback, initialState, allowKe
 			isBinding = true
 			keybindButton.Text = "..."
 			local tempSize = getButtonWidth("...")
-			twen.fortnite(keybindButton, {Size = tempSize}, "Linear", {Duration = 0.1, EasingDirection = Enum.EasingDirection.InOut})
-			twen.fortnite(keybindButton.UIStroke, {Color = Color3.fromRGB(0, 137, 255)}, "Linear", {Duration = 0.1})
+			twen.fortnite(keybindButton, { Size = tempSize }, "Linear",
+				{ Duration = 0.1, EasingDirection = Enum.EasingDirection.InOut })
+			twen.fortnite(keybindButton.UIStroke, { Color = Color3.fromRGB(0, 137, 255) }, "Linear", { Duration = 0.1 })
 
 			inputConnection = UserInputService.InputBegan:Connect(function(input, gameProcessed)
 				if gameProcessed then return end
@@ -412,7 +433,7 @@ local function createToggleButton(parent, label, callback, initialState, allowKe
 					isBinding = false
 					inputConnection:Disconnect()
 
-					if input.KeyCode == Enum.KeyCode.Backspace then
+					if input.KeyCode == Enum.KeyCode.Escape then
 						if keyInputConnection then
 							keyInputConnection:Disconnect()
 							keyInputConnection = nil
@@ -420,11 +441,14 @@ local function createToggleButton(parent, label, callback, initialState, allowKe
 						currentKey = nil
 						keybindButton.Text = "None"
 						local targetSize = getButtonWidth("None")
-						twen.fortnite(keybindButton, {Size = targetSize}, "Linear", {Duration = 0.1, EasingDirection = Enum.EasingDirection.InOut})
-						twen.fortnite(keybindButton.UIStroke, {Color = Color3.fromRGB(25, 25, 25)}, "Linear", {Duration = 0.1})
+						twen.fortnite(keybindButton, { Size = targetSize }, "Linear",
+							{ Duration = 0.1, EasingDirection = Enum.EasingDirection.InOut })
+						twen.fortnite(keybindButton.UIStroke, { Color = Color3.fromRGB(25, 25, 25) }, "Linear",
+							{ Duration = 0.1 })
 					else
 						updateKey(input.KeyCode)
-						twen.fortnite(keybindButton.UIStroke, {Color = Color3.fromRGB(25, 25, 25)}, "Linear", {Duration = 0.1})
+						twen.fortnite(keybindButton.UIStroke, { Color = Color3.fromRGB(25, 25, 25) }, "Linear",
+							{ Duration = 0.1 })
 					end
 				end
 			end)
@@ -445,57 +469,13 @@ local function createToggleButton(parent, label, callback, initialState, allowKe
 	return toggleButton
 end
 
-local function createLabel(label)
-	local labelFrame = inst("Frame", {
-		Name = "LabelHolder",
-		BorderSizePixel = 0,
-		Size = UDim2.fromOffset(237, 28),
-		AnchorPoint = Vector2.new(0.5, 0),
-		BackgroundTransparency = 0,
-		BackgroundColor3 = Color3.fromRGB(31, 31, 31),
-		Children = {
-			inst("UICorner", { CornerRadius = UDim.new(0.2, 0) }),
-			inst("TextLabel", {
-				Name = "Title",
-				BorderSizePixel = 0,
-				Size = UDim2.fromScale(1, 0.5),
-				AnchorPoint = Vector2.new(0.5, 0.5),
-				Position = UDim2.fromScale(0.54, 0.5),
-				BackgroundTransparency = 1,
-				BackgroundColor3 = Color3.fromRGB(44, 44, 44),
-				Text = label,
-				TextScaled = true,
-				TextSize = 14,
-				TextColor3 = Color3.fromRGB(255, 255, 255),
-				Font = Enum.Font.SourceSansSemibold,
-				TextXAlignment = Enum.TextXAlignment.Left,
-			})
-		}
-	})
-	return labelFrame
-end
-
-local function createDivider(parent, label)
-	local divider = inst("Frame", {
-		Name = "Divider",
-		BorderSizePixel = 0,
-		Size = UDim2.new(2, 0, 0, 2),
-		AnchorPoint = Vector2.new(0.5, 0),
-		BackgroundTransparency = 0,
-		BackgroundColor3 = Color3.fromRGB(31, 31, 31),
-		Children = {
-			inst("UICorner", { CornerRadius = UDim.new(1, 0) }),
-		}
-	}, parent)
-	return divider
-end
-
 local function createSimpleButton(parent, label, callback)
 	local simpleButton = inst("Frame", {
 		Name = "SimpleButtonHolder",
+		ClipsDescendants = true,
 		BorderSizePixel = 0,
 		Size = UDim2.fromOffset(237, 28),
-		AnchorPoint = Vector2.new(0.5,0),
+		AnchorPoint = Vector2.new(0.5, 0),
 		BackgroundTransparency = 0,
 		BackgroundColor3 = Color3.fromRGB(31, 31, 31),
 		Children = {
@@ -508,7 +488,7 @@ local function createSimpleButton(parent, label, callback)
 		BorderSizePixel = 0,
 		Size = UDim2.fromScale(0.98, 0.8),
 		AnchorPoint = Vector2.new(0.5, 0.5),
-		Position = UDim2.fromScale(0.5,0.5),
+		Position = UDim2.fromScale(0.5, 0.5),
 		BackgroundTransparency = 0,
 		BackgroundColor3 = Color3.fromRGB(42, 42, 42),
 		AutoButtonColor = false,
@@ -518,13 +498,13 @@ local function createSimpleButton(parent, label, callback)
 			inst("TextLabel", {
 				Name = "Title",
 				BorderSizePixel = 0,
-				Size = UDim2.fromScale(1,0.6),
-				AnchorPoint = Vector2.new(0.5,0.5),
+				Size = UDim2.fromScale(1, 0.6),
+				AnchorPoint = Vector2.new(0.5, 0.5),
 				Position = UDim2.fromScale(0.5, 0.5),
 				BackgroundTransparency = 1,
 				BackgroundColor3 = Color3.fromRGB(44, 44, 44),
 				Text = label or "Button",
-				TextScaled = true,
+				TextScaled = false,
 				TextSize = 14,
 				TextColor3 = Color3.fromRGB(255, 255, 255),
 				Font = Enum.Font.SourceSansSemibold,
@@ -550,21 +530,23 @@ local function createSlider(parent, label, callback, min, max, default, suffix)
 		Name = "SliderHolder",
 		BorderSizePixel = 0,
 		Size = UDim2.fromOffset(237, 28),
-		AnchorPoint = Vector2.new(0.5,0),
+		AnchorPoint = Vector2.new(0.5, 0),
 		BackgroundTransparency = 0,
+		ClipsDescendants = true,
 		BackgroundColor3 = Color3.fromRGB(31, 31, 31),
 	}, parent)
 	inst("UICorner", { CornerRadius = UDim.new(0.2, 0) }, slider)
 	inst("TextLabel", {
 		Name = "Title",
 		BorderSizePixel = 0,
-		Size = UDim2.fromScale(1,0.5),
-		AnchorPoint = Vector2.new(0.5,0.5),
-		Position = UDim2.fromScale(0.54, 0.5),
+		Size = UDim2.fromScale(0.43, 0.5),
+		AnchorPoint = Vector2.new(0, 0.5),
+		Position = UDim2.fromScale(0.038, 0.5),
 		BackgroundTransparency = 1,
 		BackgroundColor3 = Color3.fromRGB(44, 44, 44),
 		Text = label or "Slider",
-		TextScaled = true,
+		TextScaled = false,
+		TextTruncate = Enum.TextTruncate.AtEnd,
 		TextSize = 14,
 		TextColor3 = Color3.fromRGB(255, 255, 255),
 		Font = Enum.Font.SourceSansSemibold,
@@ -576,7 +558,7 @@ local function createSlider(parent, label, callback, min, max, default, suffix)
 		BorderSizePixel = 0,
 		Size = UDim2.fromScale(0.3, 0.2),
 		AnchorPoint = Vector2.new(0.5, 0.5),
-		Position = UDim2.fromScale(0.62,0.5),
+		Position = UDim2.fromScale(0.62, 0.5),
 		BackgroundTransparency = 0,
 		BackgroundColor3 = Color3.fromRGB(42, 42, 42),
 		Active = true,
@@ -623,11 +605,12 @@ local function createSlider(parent, label, callback, min, max, default, suffix)
 		BorderSizePixel = 0,
 		Size = UDim2.fromScale(1, 0.8),
 		AnchorPoint = Vector2.new(0.5, 0.5),
-		Position = UDim2.fromScale(0.5,0.5),
+		Position = UDim2.fromScale(0.5, 0.5),
 		BackgroundTransparency = 1,
 		TextColor3 = Color3.fromRGB(255, 255, 255),
 		Font = Enum.Font.SourceSansSemibold,
-		TextScaled = true,
+		TextScaled = false,
+		TextSize = 10,
 		Text = string.format("%.2f", default) .. (suffix or ""),
 		BackgroundColor3 = Color3.fromRGB(42, 42, 42),
 	}, TextboxFrame)
@@ -640,8 +623,8 @@ local function createSlider(parent, label, callback, min, max, default, suffix)
 	local function updateSlider(value)
 		currentValue = math.clamp(value, min, max)
 		local percentage = (currentValue - min) / (max - min)
-		twen.fortnite(progress, {Size = UDim2.fromScale(percentage, 1)}, "Linear", {Duration = 0.05})
-		twen.fortnite(ball, {Position = UDim2.fromScale(percentage, 0.5)}, "Linear", {Duration = 0.05})
+		twen.fortnite(progress, { Size = UDim2.fromScale(percentage, 1) }, "Linear", { Duration = 0.05 })
+		twen.fortnite(ball, { Position = UDim2.fromScale(percentage, 0.5) }, "Linear", { Duration = 0.05 })
 		textbox.Text = string.format("%.2f", currentValue) .. (suffix or "")
 		if callback then callback(currentValue) end
 	end
@@ -655,7 +638,7 @@ local function createSlider(parent, label, callback, min, max, default, suffix)
 			local percentage = math.clamp((mousePos - barPos) / barSize, 0, 1)
 			local newValue = min + (max - min) * percentage
 			updateSlider(newValue)
-			twen.fortnite(ball, {BackgroundColor3 = Color3.fromRGB(150, 150, 150)}, "Linear", {Duration = 0.1})
+			twen.fortnite(ball, { BackgroundColor3 = Color3.fromRGB(150, 150, 150) }, "Linear", { Duration = 0.1 })
 		end
 	end
 
@@ -676,26 +659,27 @@ local function createSlider(parent, label, callback, min, max, default, suffix)
 	inputEndedConnection = UserInputService.InputEnded:Connect(function(input)
 		if (input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch) and dragging then
 			dragging = false
-			twen.fortnite(ball, {BackgroundColor3 = Color3.fromRGB(109, 109, 109)}, "Linear", {Duration = 0.1})
+			twen.fortnite(ball, { BackgroundColor3 = Color3.fromRGB(109, 109, 109) }, "Linear", { Duration = 0.1 })
 		end
 	end)
 
 	textbox.Focused:Connect(function()
-		twen.fortnite(TextboxFrame.UIStroke, {Color = Color3.fromRGB(0, 137, 255)}, "Linear", {Duration = 0.1})
+		twen.fortnite(TextboxFrame.UIStroke, { Color = Color3.fromRGB(0, 137, 255) }, "Linear", { Duration = 0.1 })
 	end)
 
 	textbox.FocusLost:Connect(function(enterPressed)
 		if enterPressed then
 			local newValue = tonumber(textbox.Text)
 			if newValue then
-				twen.fortnite(ball, {BackgroundColor3 = Color3.fromRGB(150, 150, 150)}, "Linear", {Duration = 0.1})
+				twen.fortnite(ball, { BackgroundColor3 = Color3.fromRGB(150, 150, 150) }, "Linear", { Duration = 0.1 })
 				updateSlider(newValue)
-				twen.fortnite(ball, {BackgroundColor3 = Color3.fromRGB(109, 109, 109)}, "Linear", {Duration = 0.1, DelayTime = 0.1})
+				twen.fortnite(ball, { BackgroundColor3 = Color3.fromRGB(109, 109, 109) }, "Linear",
+					{ Duration = 0.1, DelayTime = 0.1 })
 			else
 				textbox.Text = string.format("%.2f", currentValue) .. (suffix or "")
 			end
 		end
-		twen.fortnite(TextboxFrame.UIStroke, {Color = Color3.fromRGB(25, 25, 25)}, "Linear", {Duration = 0.1})
+		twen.fortnite(TextboxFrame.UIStroke, { Color = Color3.fromRGB(25, 25, 25) }, "Linear", { Duration = 0.1 })
 		textbox.Text = string.format("%.2f", currentValue) .. (suffix or "")
 	end)
 
@@ -722,19 +706,20 @@ local function createKeypicker(parent, label, callback, defaultKey)
 		Size = UDim2.fromOffset(237, 28),
 		AnchorPoint = Vector2.new(0.5, 0),
 		BackgroundTransparency = 0,
+		ClipsDescendants = true,
 		BackgroundColor3 = Color3.fromRGB(31, 31, 31),
 		Children = {
 			inst("UICorner", { CornerRadius = UDim.new(0.2, 0) }),
 			inst("TextLabel", {
 				Name = "Title",
 				BorderSizePixel = 0,
-				Size = UDim2.fromScale(1, 0.5),
-				AnchorPoint = Vector2.new(0.5, 0.5),
-				Position = UDim2.fromScale(0.54, 0.5),
+				Size = UDim2.fromScale(0.9, 0.5),
+				AnchorPoint = Vector2.new(0, 0.5),
+				Position = UDim2.fromScale(0.038, 0.5),
 				BackgroundTransparency = 1,
 				BackgroundColor3 = Color3.fromRGB(44, 44, 44),
 				Text = label or "Keypicker",
-				TextScaled = true,
+				TextScaled = false,
 				TextSize = 14,
 				TextColor3 = Color3.fromRGB(255, 255, 255),
 				Font = Enum.Font.SourceSansSemibold,
@@ -796,7 +781,7 @@ local function createKeypicker(parent, label, callback, defaultKey)
 		}
 	}, keypicker)
 
-	applyButtonAnimations(button, 
+	applyButtonAnimations(button,
 		Color3.fromRGB(42, 42, 42),
 		Color3.fromRGB(53, 53, 53),
 		Color3.fromRGB(24, 24, 24)
@@ -810,7 +795,8 @@ local function createKeypicker(parent, label, callback, defaultKey)
 		local displayText = getDisplayName(keyCode)
 		button.Text = displayText
 		local targetSize = getButtonWidth(displayText)
-		twen.fortnite(button, {Size = targetSize}, "Linear", {Duration = 0.1, EasingDirection = Enum.EasingDirection.InOut})
+		twen.fortnite(button, { Size = targetSize }, "Linear",
+			{ Duration = 0.1, EasingDirection = Enum.EasingDirection.InOut })
 		if callback then
 			callback(currentKey)
 		end
@@ -822,8 +808,9 @@ local function createKeypicker(parent, label, callback, defaultKey)
 		isBinding = true
 		button.Text = "..."
 		local tempSize = getButtonWidth("...")
-		twen.fortnite(button, {Size = tempSize}, "Linear", {Duration = 0.1, EasingDirection = Enum.EasingDirection.InOut})
-		twen.fortnite(button.UIStroke, {Color = Color3.fromRGB(0, 137, 255)}, "Linear", {Duration = 0.1})
+		twen.fortnite(button, { Size = tempSize }, "Linear",
+			{ Duration = 0.1, EasingDirection = Enum.EasingDirection.InOut })
+		twen.fortnite(button.UIStroke, { Color = Color3.fromRGB(0, 137, 255) }, "Linear", { Duration = 0.1 })
 
 		inputConnection = UserInputService.InputBegan:Connect(function(input, gameProcessed)
 			if gameProcessed then return end
@@ -832,18 +819,19 @@ local function createKeypicker(parent, label, callback, defaultKey)
 				isBinding = false
 				inputConnection:Disconnect()
 
-				if input.KeyCode == Enum.KeyCode.Backspace then
+				if input.KeyCode == Enum.KeyCode.Escape then
 					currentKey = nil
 					button.Text = "None"
 					local targetSize = getButtonWidth("None")
-					twen.fortnite(button, {Size = targetSize}, "Linear", {Duration = 0.1, EasingDirection = Enum.EasingDirection.InOut})
-					twen.fortnite(button.UIStroke, {Color = Color3.fromRGB(25, 25, 25)}, "Linear", {Duration = 0.1})
+					twen.fortnite(button, { Size = targetSize }, "Linear",
+						{ Duration = 0.1, EasingDirection = Enum.EasingDirection.InOut })
+					twen.fortnite(button.UIStroke, { Color = Color3.fromRGB(25, 25, 25) }, "Linear", { Duration = 0.1 })
 					if callback then
 						callback(nil)
 					end
 				else
 					updateKey(input.KeyCode)
-					twen.fortnite(button.UIStroke, {Color = Color3.fromRGB(25, 25, 25)}, "Linear", {Duration = 0.1})
+					twen.fortnite(button.UIStroke, { Color = Color3.fromRGB(25, 25, 25) }, "Linear", { Duration = 0.1 })
 				end
 			end
 		end)
@@ -864,32 +852,82 @@ local function createKeypicker(parent, label, callback, defaultKey)
 	return keypicker
 end
 
+local function createDivider(parent, label)
+	local divider = inst("Frame", {
+		Name = "Divider",
+		BorderSizePixel = 0,
+		Size = UDim2.new(2, 0, 0, 2),
+		AnchorPoint = Vector2.new(0.5, 0),
+		BackgroundTransparency = 0,
+		BackgroundColor3 = Color3.fromRGB(31, 31, 31),
+		Children = {
+			inst("UICorner", { CornerRadius = UDim.new(1, 0) }),
+		}
+	}, parent)
+	return divider
+end
+
 local Library = {}
 function Library:CreateWindow(settings)
-    local title = settings.Title or "No Title"
-    local ToggleKeybind = settings.ToggleKeybind or Enum.KeyCode.RightAlt
-    local screenGui = inst("ScreenGui", {
-        Name = "Fotnite",
-        ZIndexBehavior = Enum.ZIndexBehavior.Sibling,
-        ResetOnSpawn = false,
-        IgnoreGuiInset = true,
-        DisplayOrder = 999,
-    })
-    ParentUI(screenGui)
+	local title = settings.Title or "No Title"
+	local ToggleKeybind = settings.ToggleKeybind or Enum.KeyCode.RightAlt
+	local screenGui = inst("ScreenGui", {
+		Name = "Fotnite",
+		ZIndexBehavior = Enum.ZIndexBehavior.Sibling,
+		ResetOnSpawn = false,
+		IgnoreGuiInset = true,
+		DisplayOrder = 999,
+	})
+	ParentUI(screenGui)
 
-    local googoogaga = inst("CanvasGroup", {
-        Name = "Group",
-        Size = UDim2.fromOffset(554, 453),
-        Position = UDim2.fromScale(0.5, 0.5),
-        AnchorPoint = Vector2.new(0.5, 0.5),
-        BackgroundColor3 = Color3.fromRGB(31,31,31),
-        GroupTransparency = 0,
-        BorderSizePixel = 0,
-        Visible = true,
-        Children= {
-            inst("UIScale", { Scale = 1 }),
-        }
-    }, screenGui)
+	local googoogaga = inst("CanvasGroup", {
+		Name = "Group",
+		Size = UDim2.fromOffset(554, 453),
+		Position = UDim2.fromScale(0.5, 0.5),
+		AnchorPoint = Vector2.new(0.5, 0.5),
+		BackgroundColor3 = Color3.fromRGB(31, 31, 31),
+		GroupTransparency = 0,
+		BorderSizePixel = 0,
+		Visible = true,
+		Children = {
+			inst("UIScale", { Scale = 1 }),
+		}
+	}, screenGui)
+
+	local cursor = inst("Frame", {
+		Name = "Cursor",
+		Size = UDim2.fromOffset(8, 8),
+		Position = UDim2.fromScale(0.5, 0.5),
+		AnchorPoint = Vector2.new(0.5, 0.5),
+		BackgroundColor3 = Color3.fromRGB(131, 131, 131),
+		BorderSizePixel = 0,
+		ZIndex = 9999, -- keep it above all other UI
+		Visible = false, -- initially off
+		Children = {
+			inst("UICorner", { CornerRadius = UDim.new(1, 0) }),
+			inst("UIStroke", {
+				Color = Color3.fromRGB(0, 0, 0),
+				ApplyStrokeMode = Enum.ApplyStrokeMode.Border,
+				Transparency = 0,
+				Thickness = 1,
+			})
+		}
+	}, googoogaga.Parent)
+
+	RunService.RenderStepped:Connect(function()
+		if googoogaga.Visible then
+			cursor.Visible = true
+
+			local mousePos = UserInputService:GetMouseLocation()
+
+			local inset = GuiService:GetGuiInset()
+			mousePos = Vector2.new(mousePos.X - inset.X, mousePos.Y)
+
+			cursor.Position = UDim2.fromOffset(mousePos.X, mousePos.Y)
+		else
+			cursor.Visible = false
+		end
+	end)
 
 	local profileviewFrame = inst("Frame", {
 		Name = "ProfileMainFrame",
@@ -900,7 +938,7 @@ function Library:CreateWindow(settings)
 		BorderSizePixel = 0,
 		ZIndex = 2,
 		Visible = false,
-		Children= {
+		Children = {
 			inst("UICorner", { CornerRadius = UDim.new(0.06, 0) }),
 			inst("UIStroke", {
 				Color = Color3.fromRGB(74, 74, 74),
@@ -909,11 +947,11 @@ function Library:CreateWindow(settings)
 				Thickness = 2,
 			})
 		}
-	},googoogaga)
+	}, googoogaga)
 
-		local searchBar = inst("CanvasGroup", {
+	local searchBar = inst("CanvasGroup", {
 		Name = "SearchBar",
-		Size = UDim2.fromOffset(30,30),
+		Size = UDim2.fromOffset(30, 30),
 		Position = UDim2.fromScale(0.04, 0.92),
 		AnchorPoint = Vector2.new(0, 0.5),
 		BackgroundColor3 = Color3.fromRGB(42, 42, 42),
@@ -921,16 +959,16 @@ function Library:CreateWindow(settings)
 		GroupTransparency = 0.9,
 		ZIndex = 2,
 		Visible = true,
-		Children= {
+		Children = {
 			inst("UICorner", { CornerRadius = UDim.new(0.3, 0) }),
 			inst("UIStroke", {
-				Color = Color3.fromRGB(255,255,255),
+				Color = Color3.fromRGB(255, 255, 255),
 				ApplyStrokeMode = Enum.ApplyStrokeMode.Border,
 				Transparency = 0.9,
 				Thickness = 1,
 			})
 		}
-	},googoogaga)
+	}, googoogaga)
 
 	local SearchImage = inst("ImageLabel", {
 		Name = "ImageLabel",
@@ -943,11 +981,11 @@ function Library:CreateWindow(settings)
 		ZIndex = 2,
 		Visible = true,
 		Image = "rbxassetid://124750970630984",
-		Children= {
+		Children = {
 			inst("UICorner", { CornerRadius = UDim.new(0.3, 0) }),
 
 		}
-	},searchBar)
+	}, searchBar)
 
 	local searchTextBox = inst("TextBox", {
 		Name = "HexTextbox",
@@ -970,7 +1008,7 @@ function Library:CreateWindow(settings)
 				PaddingBottom = UDim.new(0, 8),
 				PaddingLeft = UDim.new(0, 12),
 				PaddingRight = UDim.new(0, 10),
-			})	
+			})
 		}
 	}, searchBar)
 
@@ -985,7 +1023,7 @@ function Library:CreateWindow(settings)
 		ClipsDescendants = true,
 		ZIndex = 2,
 		Visible = true,
-		Children= {
+		Children = {
 			inst("UICorner", { CornerRadius = UDim.new(0.3, 0) }),
 			inst("UIStroke", {
 				Color = Color3.fromRGB(17, 17, 17),
@@ -994,7 +1032,7 @@ function Library:CreateWindow(settings)
 				Thickness = 2,
 			})
 		}
-	},profileviewFrame)
+	}, profileviewFrame)
 
 	local Image = inst("ImageLabel", {
 		Name = "ImageLabel",
@@ -1007,39 +1045,36 @@ function Library:CreateWindow(settings)
 		ZIndex = 2,
 		Visible = true,
 		Image = "rbxassetid://9456359598",
-		Children= {
+		Children = {
 			inst("UICorner", { CornerRadius = UDim.new(0.3, 0) }),
 
 		}
-	},pfp)
+	}, pfp)
 
 	searchTextBox.Focused:Connect(function()
-		twen.fortnite(searchBar, {Size = UDim2.fromOffset(200,30)}, "Quad", {Duration = 0.3})
-		twen.fortnite(searchTextBox, {TextTransparency = 0}, "Quad", {Duration = 0.1})
-		twen.fortnite(SearchImage, {ImageTransparency = 1}, "Quad", {Duration = 0.2})
-		twen.fortnite(SearchImage, {Size = UDim2.fromOffset(0,16)}, "Quad", {Duration = 0.2})
-		twen.fortnite(searchBar, {GroupTransparency = 0}, "Quad", {Duration = 0.2})
-
+		twen.fortnite(searchBar, { Size = UDim2.fromOffset(200, 30) }, "Quad", { Duration = 0.3 })
+		twen.fortnite(searchTextBox, { TextTransparency = 0 }, "Quad", { Duration = 0.1 })
+		twen.fortnite(SearchImage, { ImageTransparency = 1 }, "Quad", { Duration = 0.2 })
+		twen.fortnite(SearchImage, { Size = UDim2.fromOffset(0, 16) }, "Quad", { Duration = 0.2 })
+		twen.fortnite(searchBar, { GroupTransparency = 0 }, "Quad", { Duration = 0.2 })
 	end)
 
 	searchTextBox.MouseEnter:Connect(function()
-		twen.fortnite(SearchImage, {Rotation = 46}, "Quad", {Duration = 0.3})
-		twen.fortnite(searchBar, {GroupTransparency = 0}, "Quad", {Duration = 0.2})
-
+		twen.fortnite(SearchImage, { Rotation = 46 }, "Quad", { Duration = 0.3 })
+		twen.fortnite(searchBar, { GroupTransparency = 0 }, "Quad", { Duration = 0.2 })
 	end)
 
 	searchTextBox.MouseLeave:Connect(function()
-		twen.fortnite(SearchImage, {Rotation = 0}, "Quad", {Duration = 0.3})
-		twen.fortnite(searchBar, {GroupTransparency = 0.9}, "Quad", {Duration = 0.2})
-
+		twen.fortnite(SearchImage, { Rotation = 0 }, "Quad", { Duration = 0.3 })
+		twen.fortnite(searchBar, { GroupTransparency = 0.9 }, "Quad", { Duration = 0.2 })
 	end)
 
 	searchTextBox.FocusLost:Connect(function()
-		twen.fortnite(searchBar, {Size = UDim2.fromOffset(30,30)}, "Quad", {Duration = 0.3})
-		twen.fortnite(searchTextBox, {TextTransparency = 1}, "Quad", {Duration = 0.1})
-		twen.fortnite(SearchImage, {ImageTransparency = 0}, "Quad", {Duration = 0.2})
-		twen.fortnite(SearchImage, {Size = UDim2.fromOffset(16,16)}, "Quad", {Duration = 0.2})
-		twen.fortnite(searchBar, {GroupTransparency = 0.9}, "Quad", {Duration = 0.2})
+		twen.fortnite(searchBar, { Size = UDim2.fromOffset(30, 30) }, "Quad", { Duration = 0.3 })
+		twen.fortnite(searchTextBox, { TextTransparency = 1 }, "Quad", { Duration = 0.1 })
+		twen.fortnite(SearchImage, { ImageTransparency = 0 }, "Quad", { Duration = 0.2 })
+		twen.fortnite(SearchImage, { Size = UDim2.fromOffset(16, 16) }, "Quad", { Duration = 0.2 })
+		twen.fortnite(searchBar, { GroupTransparency = 0.9 }, "Quad", { Duration = 0.2 })
 	end)
 
 	local main = inst("Frame", {
@@ -1054,7 +1089,7 @@ function Library:CreateWindow(settings)
 			inst("UIGradient", {
 				Color = ColorSequence.new({
 					ColorSequenceKeypoint.new(0, Color3.fromRGB(31, 31, 31)),
-					ColorSequenceKeypoint.new(1, Color3.fromRGB(27,27,27))
+					ColorSequenceKeypoint.new(1, Color3.fromRGB(27, 27, 27))
 				}),
 				Rotation = 50
 			})
@@ -1115,11 +1150,14 @@ function Library:CreateWindow(settings)
 		KeypickerHolder = true,
 		DropdownHolder = true,
 		ColorPickerHolder = true,
+		TextBoxHolder = true, -- NEW: Your custom textboxes
+		LabelHolder = true, -- NEW: UI labels
 	}
 
 	local function getElementTitleText(holder)
-		-- Prefer a direct Title
+		-- Prefer direct "Title"
 		local titleLabel = holder:FindFirstChild("Title")
+
 		-- SimpleButton has Title under BTN
 		if not titleLabel then
 			local btn = holder:FindFirstChild("BTN")
@@ -1127,10 +1165,28 @@ function Library:CreateWindow(settings)
 				titleLabel = btn:FindFirstChild("Title")
 			end
 		end
-		-- Fallback: find any descendant named Title within this holder
+
+		-- TextBox uses "Box"
+		if not titleLabel then
+			local box = holder:FindFirstChild("Box")
+			if box and box:IsA("TextBox") then
+				return box.Text ~= "" and box.Text or box.PlaceholderText or ""
+			end
+		end
+
+		-- Direct text labels (LabelHolder elements)
+		if not titleLabel then
+			for _, child in ipairs(holder:GetChildren()) do
+				if child:IsA("TextLabel") then
+					return child.Text
+				end
+			end
+		end
+
 		if not titleLabel then
 			titleLabel = holder:FindFirstChild("Title", true)
 		end
+
 		return titleLabel and titleLabel.Text or ""
 	end
 
@@ -1162,11 +1218,11 @@ function Library:CreateWindow(settings)
 			currentOpenColorPicker = nil
 		end
 	end
-	
+
 	local filterTweens = {}
 	local SHOW_HEIGHT = 28
 
-	
+
 	local function tweenVisibility(frame, makeVisible)
 		if not frame:IsA("Frame") then return end
 		local targetHeight
@@ -1187,7 +1243,9 @@ function Library:CreateWindow(settings)
 			targetHeight = UDim.new(0, 0)
 		end
 
-		local tween = twen.fortnite(frame, {Size = UDim2.new(frame.Size.X.Scale, frame.Size.X.Offset, targetHeight.Scale, targetHeight.Offset)}, "Quad", {
+		local tween = twen.fortnite(frame,
+			{ Size = UDim2.new(frame.Size.X.Scale, frame.Size.X.Offset, targetHeight.Scale, targetHeight.Offset) },
+			"Quad", {
 			Duration = 0.08,
 			Callback = function()
 				if not makeVisible then
@@ -1196,7 +1254,7 @@ function Library:CreateWindow(settings)
 			end
 		})
 	end
-	
+
 	local function filterActiveTabByQuery(query)
 		local q = trim(string.lower(query or ""))
 
@@ -1218,6 +1276,7 @@ function Library:CreateWindow(settings)
 						if child:IsA("Frame") and ELEMENT_HOLDER_NAMES[child.Name] then
 							if q == "" then
 								tweenVisibility(child, true)
+
 								anyVisible = true
 							else
 								local label = string.lower(getElementTitleText(child))
@@ -1316,7 +1375,7 @@ function Library:CreateWindow(settings)
 		end)
 	end
 
-	
+
 	local function SetupMasonryLayout(scroller)
 		-- Remove the UIListLayout (we'll place manually)
 		local existingList = scroller:FindFirstChildOfClass("UIListLayout")
@@ -1342,23 +1401,23 @@ function Library:CreateWindow(settings)
 		local function relayout()
 			if not scroller or not scroller.Parent then return end
 
-			local leftPad  = getPad("Left")
-			local rightPad = getPad("Right")
-			local topPad   = getPad("Top")
-			local botPad   = getPad("Bottom")
+			local leftPad    = getPad("Left")
+			local rightPad   = getPad("Right")
+			local topPad     = getPad("Top")
+			local botPad     = getPad("Bottom")
 
-			local gapY = 8 -- vertical spacing between rows (same idea as UIListLayout.Padding)
+			local gapY       = 8 -- vertical spacing between rows (same idea as UIListLayout.Padding)
 
 			-- Keep your original 0.48 width groups.
 			-- So just place one at x=0, the other at x=0.52 (0.48 + 0.04 gap)
 			-- That .04 is the same gap UIListLayout gave between wrapped items.
-			local colX = {
-				UDim2.new(0, leftPad, 0, 0),       -- left column
+			local colX       = {
+				UDim2.new(0, leftPad, 0, 0), -- left column
 				UDim2.new(0.52, -rightPad, 0, 0), -- right column
 			}
 
 			local colHeights = { topPad, topPad }
-			local maxH = topPad
+			local maxH       = topPad
 
 			for _, child in ipairs(scroller:GetChildren()) do
 				if child:IsA("Frame") and child.Visible then
@@ -1482,7 +1541,7 @@ function Library:CreateWindow(settings)
 				inst("UIPadding", {
 					PaddingLeft = UDim.new(0, 1),
 					PaddingRight = UDim.new(0, 4),
-					PaddingTop = UDim.new(0,1),
+					PaddingTop = UDim.new(0, 1),
 				})
 			}
 		}, tabFrame)
@@ -1501,7 +1560,7 @@ function Library:CreateWindow(settings)
 				local prevMenu = currentOpenDropdown.Menu
 				local prevArrow = currentOpenDropdown.Button and currentOpenDropdown.Button:FindFirstChild("Arrow")
 				if prevMenu then
-					twen.fortnite(prevMenu, {Size = UDim2.fromOffset(119, 0)}, "Linear", {
+					twen.fortnite(prevMenu, { Size = UDim2.fromOffset(119, 0) }, "Linear", {
 						Duration = 0.1,
 						Callback = function()
 							prevMenu.Visible = false
@@ -1510,7 +1569,7 @@ function Library:CreateWindow(settings)
 					})
 				end
 				if prevArrow then
-					twen.fortnite(prevArrow, {Rotation = 0}, "Linear", {Duration = 0.1})
+					twen.fortnite(prevArrow, { Rotation = 0 }, "Linear", { Duration = 0.1 })
 				end
 			end
 
@@ -1524,25 +1583,29 @@ function Library:CreateWindow(settings)
 						currentOpenColorPicker.Value = originalValue
 
 						-- Update visual elements without animation
-						twen.fortnite(currentOpenColorPicker.PickerButton, {BackgroundColor3 = originalValue}, "Linear", {Duration = 0.1})
+						twen.fortnite(currentOpenColorPicker.PickerButton, { BackgroundColor3 = originalValue }, "Linear",
+							{ Duration = 0.1 })
 
 						-- Update textboxes
 						local colorPopup = currentOpenColorPicker.Popup
-						local hexTextbox = colorPopup and colorPopup:FindFirstChild("TextboxFrame") and colorPopup.TextboxFrame:FindFirstChild("HexTextbox")
+						local hexTextbox = colorPopup and colorPopup:FindFirstChild("TextboxFrame") and
+						colorPopup.TextboxFrame:FindFirstChild("HexTextbox")
 						local rgbFrame = colorPopup and colorPopup:FindFirstChild("RGBTextbox")
 						local rgbTextbox = rgbFrame and rgbFrame:FindFirstChild("RGBTextbox")
 
 						if hexTextbox then
-							hexTextbox.Text = string.format("#%02X%02X%02X", originalValue.R * 255, originalValue.G * 255, originalValue.B * 255)
+							hexTextbox.Text = string.format("#%02X%02X%02X", originalValue.R * 255, originalValue.G * 255,
+								originalValue.B * 255)
 							hexTextbox.TextColor3 = originalValue
 						end
 						if rgbTextbox then
-							rgbTextbox.Text = string.format("%d,%d,%d", originalValue.R * 255, originalValue.G * 255, originalValue.B * 255)
+							rgbTextbox.Text = string.format("%d,%d,%d", originalValue.R * 255, originalValue.G * 255,
+								originalValue.B * 255)
 							rgbTextbox.TextColor3 = originalValue
 						end
 					end
 
-					twen.fortnite(prevPopup, {Size = UDim2.fromOffset(170, 0)}, "Linear", {
+					twen.fortnite(prevPopup, { Size = UDim2.fromOffset(170, 0) }, "Linear", {
 						Duration = 0.1,
 						Callback = function()
 							prevPopup.Visible = false
@@ -1556,10 +1619,11 @@ function Library:CreateWindow(settings)
 		local function showTab()
 			if activeTab and activeTab ~= tabInfo then
 				activeTab.Container.Visible = false
-				twen.fortnite(activeTab.Button, {BackgroundColor3 = Color3.fromRGB(31, 31, 31)}, "Linear", {Duration = 0.1})
+				twen.fortnite(activeTab.Button, { BackgroundColor3 = Color3.fromRGB(31, 31, 31) }, "Linear",
+					{ Duration = 0.1 })
 				local prevTitle = activeTab.Button:FindFirstChild("Title")
 				if prevTitle then
-					twen.fortnite(prevTitle, {TextTransparency = 0.7}, "Linear", {Duration = 0.1})
+					twen.fortnite(prevTitle, { TextTransparency = 0.7 }, "Linear", { Duration = 0.1 })
 				end
 			end
 
@@ -1568,7 +1632,7 @@ function Library:CreateWindow(settings)
 				local prevMenu = currentOpenDropdown.Menu or currentOpenDropdown.Popup
 				local prevArrow = currentOpenDropdown.Button and currentOpenDropdown.Button:FindFirstChild("Arrow")
 				if prevMenu then
-					twen.fortnite(prevMenu, {Size = UDim2.fromOffset(prevMenu.Size.X.Offset, 0)}, "Linear", {
+					twen.fortnite(prevMenu, { Size = UDim2.fromOffset(prevMenu.Size.X.Offset, 0) }, "Linear", {
 						Duration = 0.1,
 						Callback = function()
 							prevMenu.Visible = false
@@ -1576,7 +1640,7 @@ function Library:CreateWindow(settings)
 					})
 				end
 				if prevArrow then
-					twen.fortnite(prevArrow, {Rotation = 0}, "Linear", {Duration = 0.1})
+					twen.fortnite(prevArrow, { Rotation = 0 }, "Linear", { Duration = 0.1 })
 				end
 				currentOpenDropdown = nil
 			end
@@ -1585,7 +1649,7 @@ function Library:CreateWindow(settings)
 			if currentOpenColorPicker then
 				local prevPopup = currentOpenColorPicker.Popup
 				if prevPopup then
-					twen.fortnite(prevPopup, {Size = UDim2.fromOffset(170, 0)}, "Linear", {
+					twen.fortnite(prevPopup, { Size = UDim2.fromOffset(170, 0) }, "Linear", {
 						Duration = 0.1,
 						Callback = function()
 							prevPopup.Visible = false
@@ -1598,7 +1662,7 @@ function Library:CreateWindow(settings)
 			tabInfo.Container.Visible = true
 			local currentTitle = button:FindFirstChild("Title")
 			if currentTitle then
-				twen.fortnite(currentTitle, {TextTransparency = 0}, "Linear", {Duration = 0.1})
+				twen.fortnite(currentTitle, { TextTransparency = 0 }, "Linear", { Duration = 0.1 })
 			end
 			activeTab = tabInfo
 		end
@@ -1637,7 +1701,7 @@ function Library:CreateWindow(settings)
 			BorderSizePixel = 0,
 			Size = UDim2.fromScale(0.49, 0),
 			BackgroundTransparency = 0,
-			BackgroundColor3 = Color3.fromRGB(42,42,42),
+			BackgroundColor3 = Color3.fromRGB(42, 42, 42),
 			ClipsDescendants = true,
 			AutomaticSize = Enum.AutomaticSize.Y,
 		}, scroller)
@@ -1652,9 +1716,10 @@ function Library:CreateWindow(settings)
 			Size = UDim2.new(1, 0, 0, 28),
 			Position = UDim2.fromOffset(0, 0),
 			BackgroundTransparency = 1,
-			BackgroundColor3 = Color3.fromRGB(42,42,42),
+			BackgroundColor3 = Color3.fromRGB(42, 42, 42),
 			Text = name,
-			TextScaled = true,
+			TextScaled = false,
+			TextTruncate = Enum.TextTruncate.AtEnd,
 			TextSize = 14,
 			TextColor3 = Color3.fromRGB(255, 255, 255),
 			Font = Enum.Font.SourceSansSemibold,
@@ -1673,13 +1738,6 @@ function Library:CreateWindow(settings)
 			Thickness = 1.9
 		}, titleLabel)
 
-		inst("UIStroke", {
-			Color = Color3.fromRGB(255,255,255),
-			ApplyStrokeMode = Enum.ApplyStrokeMode.Border,
-			Thickness = 1,
-			Transparency = 0.95
-		}, group)
-
 		local Holder = inst("Frame", {
 			Name = "Holder",
 			BorderSizePixel = 0,
@@ -1689,7 +1747,6 @@ function Library:CreateWindow(settings)
 			BackgroundColor3 = Color3.fromRGB(232, 232, 232),
 			AutomaticSize = Enum.AutomaticSize.Y,
 		}, group)
-
 
 		---googogogogooggogoogoagoagoagooagoaoao
 
@@ -1728,13 +1785,45 @@ function Library:CreateWindow(settings)
 			return toggle
 		end
 
+		local function createLabel(label, color)
+			local labelFrame = inst("Frame", {
+				Name = "LabelHolder",
+				BorderSizePixel = 0,
+				Size = UDim2.fromOffset(237, 20),
+				AnchorPoint = Vector2.new(0.5, 0),
+				BackgroundTransparency = 1,
+				ClipsDescendants = true,
+				BackgroundColor3 = Color3.fromRGB(31, 31, 31),
+				Children = {
+					inst("UICorner", { CornerRadius = UDim.new(0.2, 0) }),
+					inst("TextLabel", {
+						Name = "Title",
+						BorderSizePixel = 0,
+						Size = UDim2.fromScale(1, 0.5),
+						AnchorPoint = Vector2.new(0.5, 0.5),
+						Position = UDim2.fromScale(0.52, 0.5),
+						BackgroundTransparency = 1,
+						BackgroundColor3 = Color3.fromRGB(44, 44, 44),
+						Text = label,
+						TextTruncate = Enum.TextTruncate.AtEnd,
+						TextScaled = false,
+						TextSize = 14,
+						TextColor3 = color or Color3.fromRGB(255, 255, 255),
+						Font = Enum.Font.SourceSansSemibold,
+						TextXAlignment = Enum.TextXAlignment.Left,
+					})
+				}
+			})
+			return labelFrame
+		end
+
 		function groupObj:AddDivider(label)
 			local divider = createDivider(self.Holder, label)
 			return divider
 		end
 
-		function groupObj:AddLabel(label)
-			local labelFrame = createLabel(label)
+		function groupObj:AddLabel(label, color)
+			local labelFrame = createLabel(label, color)
 			labelFrame.Parent = self.Holder
 			return labelFrame
 		end
@@ -1813,6 +1902,7 @@ function Library:CreateWindow(settings)
 				AnchorPoint = Vector2.new(0.5, 0),
 				BackgroundTransparency = 0,
 				BackgroundColor3 = Color3.fromRGB(31, 31, 31),
+				ClipsDescendants = true,
 				Children = {
 					inst("UICorner", { CornerRadius = UDim.new(0.2, 0) }),
 					inst("TextLabel", {
@@ -1824,7 +1914,7 @@ function Library:CreateWindow(settings)
 						BackgroundTransparency = 1,
 						BackgroundColor3 = Color3.fromRGB(44, 44, 44),
 						Text = label,
-						TextScaled = true,
+						TextScaled = false,
 						TextSize = 14,
 						TextColor3 = Color3.fromRGB(255, 255, 255),
 						Font = Enum.Font.SourceSansSemibold,
@@ -1891,7 +1981,7 @@ function Library:CreateWindow(settings)
 						BackgroundTransparency = 1,
 						BackgroundColor3 = Color3.fromRGB(44, 44, 44),
 						Text = "",
-						TextScaled = true,
+						TextScaled = false,
 						ClipsDescendants = true,
 						TextSize = 14,
 						TextColor3 = Color3.fromRGB(255, 255, 255),
@@ -1914,7 +2004,7 @@ function Library:CreateWindow(settings)
 				}
 			}, DropdownFrame)
 
-			applyButtonAnimations(button, 
+			applyButtonAnimations(button,
 				Color3.fromRGB(42, 42, 42),
 				Color3.fromRGB(53, 53, 53),
 				Color3.fromRGB(24, 24, 24)
@@ -1966,7 +2056,7 @@ function Library:CreateWindow(settings)
 				local itemHeight = 20
 				local itemCount = math.min(#dropdownObj.Values, dropdownObj.MaxVisibleItems)
 				local newHeight = itemCount * (itemHeight + 1) + 8
-				twen.fortnite(ContextMainFrame, {Size = UDim2.fromOffset(119, newHeight)}, "Linear", {Duration = 0.1})
+				twen.fortnite(ContextMainFrame, { Size = UDim2.fromOffset(119, newHeight) }, "Linear", { Duration = 0.1 })
 			end
 
 			local function buildMenu()
@@ -1990,7 +2080,8 @@ function Library:CreateWindow(settings)
 				}, ContextMainFrame)
 
 				for _, value in ipairs(dropdownObj.Values) do
-					local isSelected = dropdownObj.Multi and table.find(dropdownObj.Value, value) or (not dropdownObj.Multi and tostring(value) == tostring(dropdownObj.Value))
+					local isSelected = dropdownObj.Multi and table.find(dropdownObj.Value, value) or
+					(not dropdownObj.Multi and tostring(value) == tostring(dropdownObj.Value))
 					local optionButton = inst("TextButton", {
 						BorderSizePixel = 0,
 						Size = UDim2.new(1, 0, 0, 20),
@@ -2061,14 +2152,14 @@ function Library:CreateWindow(settings)
 							end
 						else
 							dropdownObj.Value = value
-							twen.fortnite(ContextMainFrame, {Size = UDim2.fromOffset(119, 0)}, "Linear", {
+							twen.fortnite(ContextMainFrame, { Size = UDim2.fromOffset(119, 0) }, "Linear", {
 								Duration = 0.1,
 								Callback = function()
 									ContextMainFrame.Visible = false
 									currentOpenDropdown = nil
 								end
 							})
-							twen.fortnite(button:FindFirstChild("Arrow"), {Rotation = 0}, "Linear", {Duration = 0.1})
+							twen.fortnite(button:FindFirstChild("Arrow"), { Rotation = 0 }, "Linear", { Duration = 0.1 })
 							for _, btn in ipairs(ContextMainFrame:GetChildren()) do
 								if btn:IsA("TextButton") then
 									local isSelected = btn.Text == tostring(value)
@@ -2133,7 +2224,7 @@ function Library:CreateWindow(settings)
 						local prevMenu = currentOpenDropdown.Menu
 						local prevArrow = currentOpenDropdown.Button:FindFirstChild("Arrow")
 						if prevMenu then
-							twen.fortnite(prevMenu, {Size = UDim2.fromOffset(119, 0)}, "Linear", {
+							twen.fortnite(prevMenu, { Size = UDim2.fromOffset(119, 0) }, "Linear", {
 								Duration = 0.1,
 								Callback = function()
 									prevMenu.Visible = false
@@ -2141,7 +2232,7 @@ function Library:CreateWindow(settings)
 							})
 						end
 						if prevArrow then
-							twen.fortnite(prevArrow, {Rotation = 0}, "Linear", {Duration = 0.1})
+							twen.fortnite(prevArrow, { Rotation = 0 }, "Linear", { Duration = 0.1 })
 						end
 						currentOpenDropdown = nil
 					end
@@ -2158,15 +2249,16 @@ function Library:CreateWindow(settings)
 					-- Set initial size and make visible before expanding
 					ContextMainFrame.Size = UDim2.fromOffset(119, 0)
 					ContextMainFrame.Visible = true
-					twen.fortnite(ContextMainFrame, {Size = UDim2.fromOffset(119, fullHeight)}, "Linear", {Duration = 0.1})
+					twen.fortnite(ContextMainFrame, { Size = UDim2.fromOffset(119, fullHeight) }, "Linear",
+						{ Duration = 0.1 })
 					local arrow = button:FindFirstChild("Arrow")
 					if arrow then
-						twen.fortnite(arrow, {Rotation = 180}, "Linear", {Duration = 0.1})
+						twen.fortnite(arrow, { Rotation = 180 }, "Linear", { Duration = 0.1 })
 					end
 				else
 					-- Close the current dropdown
 					if currentOpenDropdown == dropdownObj then
-						twen.fortnite(ContextMainFrame, {Size = UDim2.fromOffset(119, 0)}, "Linear", {
+						twen.fortnite(ContextMainFrame, { Size = UDim2.fromOffset(119, 0) }, "Linear", {
 							Duration = 0.1,
 							Callback = function()
 								ContextMainFrame.Visible = false
@@ -2175,7 +2267,7 @@ function Library:CreateWindow(settings)
 						})
 						local arrow = button:FindFirstChild("Arrow")
 						if arrow then
-							twen.fortnite(arrow, {Rotation = 0}, "Linear", {Duration = 0.1})
+							twen.fortnite(arrow, { Rotation = 0 }, "Linear", { Duration = 0.1 })
 						end
 					end
 				end
@@ -2192,14 +2284,14 @@ function Library:CreateWindow(settings)
 					local frameSize = ContextMainFrame.AbsoluteSize
 					if mousePos.X < framePos.X or mousePos.X > framePos.X + frameSize.X or
 						mousePos.Y < framePos.Y or mousePos.Y > framePos.Y + frameSize.Y then
-						twen.fortnite(ContextMainFrame, {Size = UDim2.fromOffset(119, 0)}, "Linear", {
+						twen.fortnite(ContextMainFrame, { Size = UDim2.fromOffset(119, 0) }, "Linear", {
 							Duration = 0.1,
 							Callback = function()
 								ContextMainFrame.Visible = false
 								currentOpenDropdown = nil
 							end
 						})
-						twen.fortnite(button:FindFirstChild("Arrow"), {Rotation = 0}, "Linear", {Duration = 0.1})
+						twen.fortnite(button:FindFirstChild("Arrow"), { Rotation = 0 }, "Linear", { Duration = 0.1 })
 					end
 				end
 			end)
@@ -2240,18 +2332,20 @@ function Library:CreateWindow(settings)
 				AnchorPoint = Vector2.new(0.5, 0),
 				BackgroundTransparency = 0,
 				BackgroundColor3 = Color3.fromRGB(31, 31, 31),
+				ClipsDescendants = true,
 				Children = {
 					inst("UICorner", { CornerRadius = UDim.new(0.2, 0) }),
 					inst("TextLabel", {
 						Name = "Title",
 						BorderSizePixel = 0,
-						Size = UDim2.fromScale(1, 0.5),
-						AnchorPoint = Vector2.new(0.5, 0.5),
-						Position = UDim2.fromScale(0.54, 0.5),
+						Size = UDim2.fromScale(0.87, 0.5),
+						AnchorPoint = Vector2.new(0, 0.5),
+						Position = UDim2.fromScale(0.038, 0.5),
 						BackgroundTransparency = 1,
 						BackgroundColor3 = Color3.fromRGB(44, 44, 44),
 						Text = label,
-						TextScaled = true,
+						TextScaled = false,
+						TextTruncate = Enum.TextTruncate.AtEnd,
 						TextSize = 14,
 						TextColor3 = Color3.fromRGB(255, 255, 255),
 						Font = Enum.Font.SourceSansSemibold,
@@ -2434,7 +2528,8 @@ function Library:CreateWindow(settings)
 				Font = Enum.Font.SourceSansSemibold,
 				TextXAlignment = Enum.TextXAlignment.Left,
 				TextScaled = true,
-				Text = defaultCol and string.format("#%02X%02X%02X", defaultCol.R * 255, defaultCol.G * 255, defaultCol.B * 255) or "#FFFFFF",
+				Text = defaultCol and
+				string.format("#%02X%02X%02X", defaultCol.R * 255, defaultCol.G * 255, defaultCol.B * 255) or "#FFFFFF",
 				PlaceholderText = "Put Hex Here:",
 				BackgroundColor3 = Color3.fromRGB(42, 42, 42),
 				ClearTextOnFocus = false,
@@ -2472,7 +2567,8 @@ function Library:CreateWindow(settings)
 				Font = Enum.Font.SourceSansSemibold,
 				TextXAlignment = Enum.TextXAlignment.Left,
 				TextScaled = true,
-				Text = defaultCol and string.format("%d,%d,%d", defaultCol.R * 255, defaultCol.G * 255, defaultCol.B * 255) or "255,0,0",
+				Text = defaultCol and
+				string.format("%d,%d,%d", defaultCol.R * 255, defaultCol.G * 255, defaultCol.B * 255) or "255,0,0",
 				PlaceholderText = "Put RGB Here:",
 				BackgroundColor3 = Color3.fromRGB(42, 42, 42),
 				ClearTextOnFocus = false,
@@ -2503,8 +2599,8 @@ function Library:CreateWindow(settings)
 						AnchorPoint = Vector2.new(0.5, 0.5),
 						BackgroundTransparency = 1,
 						Text = "Copy RGB",
-						TextScaled = true,
-						TextSize = 16,
+						TextScaled = false,
+						TextSize = 11,
 						TextColor3 = Color3.fromRGB(255, 255, 255),
 						TextTransparency = 0,
 						Font = Enum.Font.SourceSansSemibold,
@@ -2517,7 +2613,8 @@ function Library:CreateWindow(settings)
 						}
 					}),
 					inst("UICorner", { CornerRadius = UDim.new(0, 3) }),
-					inst("UIStroke", { Color = Color3.fromRGB(25, 25, 25), ApplyStrokeMode = Enum.ApplyStrokeMode.Border, Transparency = 0 })
+					inst("UIStroke",
+						{ Color = Color3.fromRGB(25, 25, 25), ApplyStrokeMode = Enum.ApplyStrokeMode.Border, Transparency = 0 })
 				}
 			}, ColorPopup)
 
@@ -2540,8 +2637,8 @@ function Library:CreateWindow(settings)
 						AnchorPoint = Vector2.new(0.5, 0.5),
 						BackgroundTransparency = 1,
 						Text = "Copy HEX",
-						TextScaled = true,
-						TextSize = 16,
+						TextScaled = false,
+						TextSize = 11,
 						TextColor3 = Color3.fromRGB(255, 255, 255),
 						TextTransparency = 0,
 						Font = Enum.Font.SourceSansSemibold,
@@ -2554,7 +2651,8 @@ function Library:CreateWindow(settings)
 						}
 					}),
 					inst("UICorner", { CornerRadius = UDim.new(0, 3) }),
-					inst("UIStroke", { Color = Color3.fromRGB(25, 25, 25), ApplyStrokeMode = Enum.ApplyStrokeMode.Border, Transparency = 0 })
+					inst("UIStroke",
+						{ Color = Color3.fromRGB(25, 25, 25), ApplyStrokeMode = Enum.ApplyStrokeMode.Border, Transparency = 0 })
 				}
 			}, ColorPopup)
 
@@ -2586,14 +2684,16 @@ function Library:CreateWindow(settings)
 			local function updateColorFromHSV()
 				colorPickerObj.Value = Color3.fromHSV(hue, saturation, value)
 
-				twen.fortnite(pickerButton, {BackgroundColor3 = colorPickerObj.Value}, "Linear", {Duration = 0.15})
+				twen.fortnite(pickerButton, { BackgroundColor3 = colorPickerObj.Value }, "Linear", { Duration = 0.15 })
 				--gamw to spi
 				if not isHexFocused then
-					hexTextbox.Text = string.format("#%02X%02X%02X", colorPickerObj.Value.R * 255, colorPickerObj.Value.G * 255, colorPickerObj.Value.B * 255)
+					hexTextbox.Text = string.format("#%02X%02X%02X", colorPickerObj.Value.R * 255,
+						colorPickerObj.Value.G * 255, colorPickerObj.Value.B * 255)
 					hexTextbox.TextColor3 = colorPickerObj.Value
 				end
 				if not isRgbFocused then
-					rgbTextbox.Text = string.format("%d,%d,%d", colorPickerObj.Value.R * 255, colorPickerObj.Value.G * 255, colorPickerObj.Value.B * 255)
+					rgbTextbox.Text = string.format("%d,%d,%d", colorPickerObj.Value.R * 255,
+						colorPickerObj.Value.G * 255, colorPickerObj.Value.B * 255)
 					rgbTextbox.TextColor3 = colorPickerObj.Value
 				end
 
@@ -2606,7 +2706,6 @@ function Library:CreateWindow(settings)
 				local hueGradient = Color:FindFirstChild("HueSaturationGradient")
 				if hueGradient then
 					if skipHueTween then
-
 						hueGradient.Color = ColorSequence.new({
 							ColorSequenceKeypoint.new(0, Color3.fromRGB(255, 255, 255)),
 							ColorSequenceKeypoint.new(1, Color3.fromHSV(hue, 1, 1))
@@ -2627,7 +2726,7 @@ function Library:CreateWindow(settings)
 							local elapsed = tick() - startTime
 							local progress = math.min(elapsed / duration, 1) --to tween gia to color
 
-							progress = progress * progress * (3 - 2 * progress) 
+							progress = progress * progress * (3 - 2 * progress)
 
 							local interpolatedHue = currentHue + (targetHue - currentHue) * progress
 							--to gradient color gia to megalo pragmataki blah blah blah hahah ah gamw to spiti sou vlaka
@@ -2654,11 +2753,12 @@ function Library:CreateWindow(settings)
 				end
 				local pointer = Color:FindFirstChild("Pointer")
 				if pointer then
-					twen.fortnite(pointer, {Position = UDim2.fromScale(saturation, 1 - value)}, "Linear", {Duration = 0.05})
+					twen.fortnite(pointer, { Position = UDim2.fromScale(saturation, 1 - value) }, "Linear",
+						{ Duration = 0.05 })
 				end
 				local huePointer = ColorBar:FindFirstChild("Pointer")
 				if huePointer then
-					twen.fortnite(huePointer, {Position = UDim2.fromScale(hue, 0.5)}, "Linear", {Duration = 0.05})
+					twen.fortnite(huePointer, { Position = UDim2.fromScale(hue, 0.5) }, "Linear", { Duration = 0.05 })
 				end
 				updateColorFromHSV()
 			end
@@ -2725,7 +2825,7 @@ function Library:CreateWindow(settings)
 				if isOpen then
 					if currentOpenDropdown and currentOpenDropdown.Popup then
 						local prevPopup = currentOpenDropdown.Popup
-						twen.fortnite(prevPopup, {Size = UDim2.fromOffset(170, 0)}, "Linear", {
+						twen.fortnite(prevPopup, { Size = UDim2.fromOffset(170, 0) }, "Linear", {
 							Duration = 0.1,
 							Callback = function()
 								prevPopup.Visible = false
@@ -2735,7 +2835,7 @@ function Library:CreateWindow(settings)
 					end
 					if currentOpenColorPicker and currentOpenColorPicker ~= colorPickerObj then
 						local prevPopup = currentOpenColorPicker.Popup
-						twen.fortnite(prevPopup, {Size = UDim2.fromOffset(170, 0)}, "Linear", {
+						twen.fortnite(prevPopup, { Size = UDim2.fromOffset(170, 0) }, "Linear", {
 							Duration = 0.1,
 							Callback = function()
 								prevPopup.Visible = false
@@ -2755,12 +2855,12 @@ function Library:CreateWindow(settings)
 					local relativeY = (buttonAbsPos.Y - parentAbsPos.Y + buttonAbsSize.Y) / parentAbsSize.Y + 0.005
 					ColorPopup.Size = UDim2.fromOffset(170, 0)
 					ColorPopup.Visible = true
-					twen.fortnite(ColorPopup, {Size = UDim2.fromOffset(170, fullHeight)}, "Linear", {Duration = 0.1})
+					twen.fortnite(ColorPopup, { Size = UDim2.fromOffset(170, fullHeight) }, "Linear", { Duration = 0.1 })
 				else
 					if currentOpenColorPicker == colorPickerObj then
 						-- Clear original value when properly closing (not when canceling)
 						colorPickerObj.OriginalValue = nil
-						twen.fortnite(ColorPopup, {Size = UDim2.fromOffset(170, 0)}, "Linear", {
+						twen.fortnite(ColorPopup, { Size = UDim2.fromOffset(170, 0) }, "Linear", {
 							Duration = 0.1,
 							Callback = function()
 								ColorPopup.Visible = false
@@ -2784,7 +2884,7 @@ function Library:CreateWindow(settings)
 						mousePos.Y < framePos.Y or mousePos.Y > framePos.Y + frameSize.Y then
 						-- Don't close if clicking on a textbox
 						if not (isHexFocused or isRgbFocused) then
-							twen.fortnite(ColorPopup, {Size = UDim2.fromOffset(170, 0)}, "Linear", {
+							twen.fortnite(ColorPopup, { Size = UDim2.fromOffset(170, 0) }, "Linear", {
 								Duration = 0.1,
 								Callback = function()
 									ColorPopup.Visible = false
@@ -2812,7 +2912,7 @@ function Library:CreateWindow(settings)
 
 			hexTextbox.Focused:Connect(function()
 				isHexFocused = true
-				twen.fortnite(HexFrame.UIStroke, {Color = Color3.fromRGB(0, 137, 255)}, "Linear", {Duration = 0.1})
+				twen.fortnite(HexFrame.UIStroke, { Color = Color3.fromRGB(0, 137, 255) }, "Linear", { Duration = 0.1 })
 			end)
 
 			hexTextbox.FocusLost:Connect(function(enterPressed)
@@ -2829,18 +2929,20 @@ function Library:CreateWindow(settings)
 							hue, saturation, value = colorPickerObj.Value:ToHSV()
 							updateColorPicker()
 						else
-							hexTextbox.Text = string.format("#%02X%02X%02X", colorPickerObj.Value.R * 255, colorPickerObj.Value.G * 255, colorPickerObj.Value.B * 255)
+							hexTextbox.Text = string.format("#%02X%02X%02X", colorPickerObj.Value.R * 255,
+								colorPickerObj.Value.G * 255, colorPickerObj.Value.B * 255)
 						end
 					else
-						hexTextbox.Text = string.format("#%02X%02X%02X", colorPickerObj.Value.R * 255, colorPickerObj.Value.G * 255, colorPickerObj.Value.B * 255)
+						hexTextbox.Text = string.format("#%02X%02X%02X", colorPickerObj.Value.R * 255,
+							colorPickerObj.Value.G * 255, colorPickerObj.Value.B * 255)
 					end
 				end
-				twen.fortnite(HexFrame.UIStroke, {Color = Color3.fromRGB(25, 25, 25)}, "Linear", {Duration = 0.1})
+				twen.fortnite(HexFrame.UIStroke, { Color = Color3.fromRGB(25, 25, 25) }, "Linear", { Duration = 0.1 })
 			end)
 
 			rgbTextbox.Focused:Connect(function()
 				isRgbFocused = true
-				twen.fortnite(RGBTextbox.UIStroke, {Color = Color3.fromRGB(0, 137, 255)}, "Linear", {Duration = 0.1})
+				twen.fortnite(RGBTextbox.UIStroke, { Color = Color3.fromRGB(0, 137, 255) }, "Linear", { Duration = 0.1 })
 			end)
 
 			rgbTextbox.FocusLost:Connect(function(enterPressed)
@@ -2855,10 +2957,11 @@ function Library:CreateWindow(settings)
 						hue, saturation, value = colorPickerObj.Value:ToHSV()
 						updateColorPicker()
 					else
-						rgbTextbox.Text = string.format("%d,%d,%d", colorPickerObj.Value.R * 255, colorPickerObj.Value.G * 255, colorPickerObj.Value.B * 255)
+						rgbTextbox.Text = string.format("%d,%d,%d", colorPickerObj.Value.R * 255,
+							colorPickerObj.Value.G * 255, colorPickerObj.Value.B * 255)
 					end
 				end
-				twen.fortnite(RGBTextbox.UIStroke, {Color = Color3.fromRGB(25, 25, 25)}, "Linear", {Duration = 0.1})
+				twen.fortnite(RGBTextbox.UIStroke, { Color = Color3.fromRGB(25, 25, 25) }, "Linear", { Duration = 0.1 })
 			end)
 
 			ColorPickerHolder.AncestryChanged:Connect(function()
@@ -2892,7 +2995,84 @@ function Library:CreateWindow(settings)
 			return ColorPickerHolder
 		end
 
+		function groupObj:AddTextbox(labelOrTable, callback, placeholderText, defaultText)
+			local label, cb, placeholder, default, finished
+			if type(labelOrTable) == "table" then
+				label = labelOrTable.Text or "Textbox"
+				cb = labelOrTable.Callback or callback
+				placeholder = labelOrTable.Placeholder or placeholderText or "Enter text..."
+				default = labelOrTable.Default or defaultText or ""
+				finished = (labelOrTable.Finished ~= nil) and labelOrTable.Finished or true
+			else
+				label = labelOrTable or "Textbox"
+				cb = callback
+				placeholder = placeholderText or "Enter text..."
+				default = defaultText or ""
+				finished = true
+			end
 
+			local TextboxHolder = inst("Frame", {
+				Name = "TextBoxHolder",
+				BorderSizePixel = 0,
+				Size = UDim2.fromOffset(237, 28),
+				AnchorPoint = Vector2.new(0.5, 0),
+				BackgroundTransparency = 0,
+				BackgroundColor3 = Color3.fromRGB(31, 31, 31),
+				ClipsDescendants = true,
+				Children = {
+					inst("UICorner", { CornerRadius = UDim.new(0.2, 0) }),
+				}
+			}, Holder)
+
+			local textbox = inst("TextBox", {
+				Name = "Box",
+				BorderSizePixel = 0,
+				Size = UDim2.fromScale(1, 0.65),
+				AnchorPoint = Vector2.new(0.5, 0.5),
+				Position = UDim2.fromScale(0.5, 0.5),
+				BackgroundTransparency = 1,
+				PlaceholderText = placeholder,
+				PlaceholderColor3 = Color3.fromRGB(74, 74, 74),
+				Text = default,
+				TextScaled = false,
+				TextTruncate = Enum.TextTruncate.AtEnd,
+				TextSize = 14,
+				TextColor3 = Color3.fromRGB(74, 74, 74),
+				Font = Enum.Font.SourceSansSemibold,
+				TextXAlignment = Enum.TextXAlignment.Left,
+				Children = {
+					inst("UIPadding", {
+						PaddingLeft = UDim.new(0, 6),
+					})
+				}
+			}, TextboxHolder)
+
+			-- Animations
+			textbox.Focused:Connect(function()
+				twen.fortnite(textbox, { TextColor3 = Color3.fromRGB(255, 255, 255) }, "Quad", { Duration = 0.2 })
+				twen.fortnite(textbox, { PlaceholderColor3 = Color3.fromRGB(255, 255, 255) }, "Quad", { Duration = 0.2 })
+				textbox.TextTruncate = Enum.TextTruncate.None
+			end)
+
+			textbox.FocusLost:Connect(function(enterPressed)
+				twen.fortnite(textbox, { TextColor3 = Color3.fromRGB(74, 74, 74) }, "Quad", { Duration = 0.2 })
+				twen.fortnite(textbox, { PlaceholderColor3 = Color3.fromRGB(74, 74, 74) }, "Quad", { Duration = 0.2 })
+				textbox.TextTruncate = Enum.TextTruncate.AtEnd
+
+				if finished and (enterPressed or textbox.Text ~= default) and cb then
+					cb(textbox.Text)
+				end
+			end)
+
+			if not finished then
+				-- Fire callback every time text updates
+				textbox:GetPropertyChangedSignal("Text"):Connect(function()
+					if cb then cb(textbox.Text) end
+				end)
+			end
+
+			return TextboxHolder
+		end
 
 		groupObj.Holder = Holder
 		groupObj.Group = group
@@ -2904,7 +3084,7 @@ function Library:CreateWindow(settings)
 	local function notify(text, duration, ...)
 		-- Concatenate all additional arguments
 		local fullText = tostring(text)
-		local args = {...}
+		local args = { ... }
 		for i, arg in ipairs(args) do
 			fullText = fullText .. tostring(arg)
 		end
@@ -2950,7 +3130,7 @@ function Library:CreateWindow(settings)
 							activeTweens[notif]:Cancel()
 							activeTweens[notif] = nil
 						end
-						local tween = twen.fortnite(notif, {Position = targetPos}, "Quad", {
+						local tween = twen.fortnite(notif, { Position = targetPos }, "Quad", {
 							Duration = 0.3,
 							EasingDirection = Enum.EasingDirection.Out
 						})
@@ -2995,7 +3175,7 @@ function Library:CreateWindow(settings)
 			Enum.Font.SourceSansBold,
 			Vector2.new(1000, 40)
 		)
-		local extraPadding = 56 -- Padding for icon and margins
+		local extraPadding = 56                -- Padding for icon and margins
 		local notifWidth = textSize.X + extraPadding -- Remove the math.max to allow small widths
 
 		-- Count existing notifications to determine initial position
@@ -3068,7 +3248,7 @@ function Library:CreateWindow(settings)
 		notification:SetAttribute("InInitialTween", true)
 
 		-- Animate notification appearance (size tween)
-		local initialTween = twen.fortnite(notification, {Size = UDim2.fromOffset(notifWidth, 40)}, "Back", {
+		local initialTween = twen.fortnite(notification, { Size = UDim2.fromOffset(notifWidth, 40) }, "Back", {
 			Duration = 0.3,
 			EasingDirection = Enum.EasingDirection.Out,
 			Callback = function()
@@ -3076,14 +3256,14 @@ function Library:CreateWindow(settings)
 			end
 		})
 
-		-- Animate duration bar (duration only affects how long the notification stays, not positioning)
+
 		local durationBar = notification:FindFirstChild("DurationBar")
 		if durationBar then
-			twen.fortnite(durationBar, {Size = UDim2.fromScale(0, 0.07)}, "Linear", {
-				Duration = duration or 5, -- Only affects how long it takes to disappear
+			twen.fortnite(durationBar, { Size = UDim2.fromScale(0, 0.07) }, "Quad", {
+				Duration = duration or 5, 
 				Callback = function()
 					-- Shrink size before destroying
-					twen.fortnite(notification, {Size = UDim2.fromOffset(notifWidth, 0)}, "Back", {
+					twen.fortnite(notification, { Size = UDim2.fromOffset(notifWidth, 0) }, "Back", {
 						Duration = 0.2,
 						EasingDirection = Enum.EasingDirection.In,
 						Callback = function()
@@ -3193,9 +3373,11 @@ function Library:CreateWindow(settings)
 		end)
 	end
 
-	applyRichTextTo(topbar.Title, "Fortnite Rapper 2 - Halloween 🎃", {
-		{ Type = "color", Value = Color3.fromRGB(255, 151, 66), Range = {21, 29} },
-	})
+	if settings.TitleRichText then
+		applyRichTextTo(topbar.Title, title, settings.TitleRichText)
+	else
+		topbar.Title.Text = title
+	end
 
 	local closebtn = inst("TextButton", {
 		Name = "CloseBtn",
@@ -3287,7 +3469,6 @@ function Library:CreateWindow(settings)
 		Color3.fromRGB(79, 79, 79)
 	)
 
-
 	return {
 		CreateTab = createTab,
 		CreateGroup = createGroup,
@@ -3297,7 +3478,6 @@ function Library:CreateWindow(settings)
 		Notify = notify,
 		AddTooltip = addTooltipToElement
 	}
-
 end
 
 return Library
